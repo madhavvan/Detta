@@ -1,19 +1,23 @@
 import pandas as pd
 from openai import OpenAI
 import os
-import streamlit as st  # Add this import
+import streamlit as st
+import httpx  # Explicitly import httpx for custom client
 
 def initialize_openai_client():
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
-    return OpenAI(api_key=api_key)
+    # Use a custom httpx client to avoid proxy issues
+    return OpenAI(
+        api_key=api_key,
+        http_client=httpx.Client()  # Explicitly set a basic httpx client without proxies
+    )
 
 def get_cleaning_suggestions(df, client):
     if client is None:
         return [("AI unavailable", "No OpenAI API key provided")]
     
-    # Prepare dataset summary for GPT-4o
     summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
     for col in df.columns:
         missing = df[col].isna().sum()
@@ -21,7 +25,6 @@ def get_cleaning_suggestions(df, client):
         unique = df[col].nunique()
         summary += f"{col}: {dtype}, {missing} missing, {unique} unique values\n"
     
-    # Query GPT-4o
     prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with reasons."
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -29,7 +32,6 @@ def get_cleaning_suggestions(df, client):
         max_tokens=500
     )
     
-    # Parse response into actionable suggestions
     suggestions_text = response.choices[0].message.content.strip()
     suggestions = []
     for line in suggestions_text.split("\n"):
@@ -43,13 +45,11 @@ def get_cleaning_suggestions(df, client):
 def apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with):
     cleaned_df = df.copy()
     
-    # Apply manual cleaning
     if columns_to_drop:
         cleaned_df = cleaned_df.drop(columns=columns_to_drop)
     if replace_value and replace_with:
         cleaned_df = cleaned_df.replace(replace_value, replace_with if replace_with != "NaN" else pd.NA)
     
-    # Apply AI suggestions
     for suggestion, _ in selected_suggestions:
         if "Fill missing values in" in suggestion:
             col = suggestion.split("in ")[1].split(" with")[0].strip()
@@ -81,7 +81,7 @@ def get_insights(df, client):
         dtype = str(df[col].dtype)
         summary += f"{col}: {dtype}, {missing} missing\n"
     
-    prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights."
+    prompt perturbations = f"Analyze this dataset summary:\n{summary}\nProvide key insights."
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
