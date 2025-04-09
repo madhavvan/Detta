@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 from data_utils import initialize_openai_client, analyze_dataset, apply_selected_operations
 
+# Must be the first Streamlit command
+st.set_page_config(page_title="Detta Pro", layout="wide", initial_sidebar_state="expanded")
+
 # Custom CSS for professional UI
 st.markdown("""
     <style>
@@ -15,8 +18,6 @@ st.markdown("""
     .suggestion-box { margin: 10px 0; padding: 10px; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 5px; }
     </style>
 """, unsafe_allow_html=True)
-
-st.set_page_config(page_title="Detta Pro", layout="wide", initial_sidebar_state="expanded")
 
 # Initialize OpenAI client
 openai_client = initialize_openai_client()
