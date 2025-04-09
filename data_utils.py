@@ -2,16 +2,15 @@ import pandas as pd
 from openai import OpenAI
 import os
 import streamlit as st
-import httpx  # Explicitly import httpx for custom client
+import httpx
 
 def initialize_openai_client():
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
-    # Use a custom httpx client to avoid proxy issues
     return OpenAI(
         api_key=api_key,
-        http_client=httpx.Client()  # Explicitly set a basic httpx client without proxies
+        http_client=httpx.Client()
     )
 
 def get_cleaning_suggestions(df, client):
@@ -81,7 +80,7 @@ def get_insights(df, client):
         dtype = str(df[col].dtype)
         summary += f"{col}: {dtype}, {missing} missing\n"
     
-    prompt perturbations = f"Analyze this dataset summary:\n{summary}\nProvide key insights."
+    prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights."  # Fixed syntax error
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
