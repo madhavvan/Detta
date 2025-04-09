@@ -2,6 +2,8 @@ import streamlit as st
 from ui import render_upload_page, render_clean_page, render_insights_page, render_visualization_page
 from data_utils import chat_with_gpt, initialize_openai_client
 
+st.set_page_config(page_title="Detta", layout="wide", initial_sidebar_state="expanded")
+
 # Custom CSS for a polished look
 st.markdown("""
     <style>
@@ -15,7 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Detta", layout="wide", initial_sidebar_state="expanded")
+
 
 # Initialize OpenAI client
 openai_client = initialize_openai_client()
