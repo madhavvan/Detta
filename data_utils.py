@@ -11,8 +11,8 @@ def initialize_openai_client():
     return OpenAI(api_key=api_key, http_client=httpx.Client())
 
 @st.cache_data
-def analyze_dataset(df, client):
-    if client is None:
+def analyze_dataset(df, _client):  # Changed 'client' to '_client' to avoid hashing
+    if _client is None:
         return [("AI unavailable: No API key.", False)]
     
     # Dataset summary
@@ -32,7 +32,7 @@ def analyze_dataset(df, client):
     - [Actionable] Suggestion
     - [Informational] Suggestion
     """
-    response = client.chat.completions.create(
+    response = _client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1000

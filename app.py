@@ -56,7 +56,7 @@ if uploaded_file:
         st.subheader("Enhance Dataset")
         if openai_client and st.button("Analyze Dataset", key="analyze"):
             with st.spinner("Analyzing dataset with AI..."):
-                suggestions = analyze_dataset(df, openai_client)
+                suggestions = analyze_dataset(df, openai_client)  # Updated to match new signature
                 st.session_state.suggestions = suggestions
         
         if "suggestions" in st.session_state and st.session_state.suggestions:
