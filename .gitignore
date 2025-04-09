@@ -1,0 +1,48 @@
+# Python-specific ignores
+__pycache__/
+*.py[cod]
+*.pyc
+.Python
+env/
+venv/
+*.egg-info/
+
+# Streamlit-specific ignores
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Environment variables
+.env
+*.env
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+.env/
+venv/
+ENV/
+
+# Temporary files
+*.log
+*.tmp
+temp/
+
+# Data files (to prevent accidental upload of datasets)
+*.csv
+*.xlsx
+*.json
+*.parquet
+*.db
+
+# Other
+*.bak
+*.swp
+*.swo
