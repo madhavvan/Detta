@@ -31,13 +31,12 @@ def get_dataset_summary(df):
             summary += f"{col}: {dtype}, {missing} missing, {unique} unique\n"
     return summary
 
-# Remove @st.cache_data to avoid hashing issues with openai_client
 def get_cleaning_suggestions(df, client):
     if client is None:
         return [("AI unavailable", "No OpenAI API key provided")]
     
     summary = get_dataset_summary(df)
-    prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with detailed reasons."
+    prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with detailed reasons. Examples: 'Fill missing values in [col] with mean', 'Drop column [col]', 'Replace [value] with [new_value]'."
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -47,12 +46,12 @@ def get_cleaning_suggestions(df, client):
         suggestions_text = response.choices[0].message.content.strip()
         suggestions = []
         for line in suggestions_text.split("\n"):
-            if line.startswith("-") or ":" in line:
+            if line.strip() and ("Fill" in line or "Drop" in line or "Replace" in line):
                 parts = line.split(" - Reason: ") if " - Reason: " in line else [line, "No reason provided"]
                 suggestion = parts[0].strip("- ").strip()
                 reason = parts[1] if len(parts) > 1 else "No reason provided"
                 suggestions.append((suggestion, reason))
-        return suggestions
+        return suggestions if suggestions else [("No valid suggestions generated", "AI response was empty or malformed")]
     except Exception as e:
         st.session_state.logs.append(f"Error in get_cleaning_suggestions: {str(e)}")
         return [("Error generating suggestions", str(e))]
@@ -60,32 +59,46 @@ def get_cleaning_suggestions(df, client):
 def apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with):
     cleaned_df = df.copy()
     
+    # Manual column dropping
     if columns_to_drop:
         cleaned_df = cleaned_df.drop(columns=columns_to_drop)
+        st.session_state.logs.append(f"Dropped columns: {columns_to_drop}")
+
+    # Manual value replacement
     if replace_value and replace_with:
-        cleaned_df = cleaned_df.replace(replace_value, replace_with if replace_with != "NaN" else pd.NA)
-    
+        try:
+            new_value = pd.NA if replace_with.lower() == "nan" else replace_with
+            cleaned_df = cleaned_df.replace(replace_value, new_value)
+            st.session_state.logs.append(f"Replaced '{replace_value}' with '{new_value}'")
+        except Exception as e:
+            st.session_state.logs.append(f"Error in manual replacement: {str(e)}")
+
+    # Apply AI suggestions
     for suggestion, _ in selected_suggestions:
         try:
             if "Fill missing values in" in suggestion:
                 col = suggestion.split("in ")[1].split(" with")[0].strip()
-                method = suggestion.split("with ")[1].strip()
+                method = suggestion.split("with ")[1].strip().lower()
                 if col in cleaned_df.columns:
                     if method == "mean":
                         cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].mean())
                     elif method == "median":
                         cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].median())
+                    st.session_state.logs.append(f"Filled missing in '{col}' with {method}")
             elif "Drop column" in suggestion:
                 col = suggestion.split("Drop column ")[1].strip()
                 if col in cleaned_df.columns:
                     cleaned_df = cleaned_df.drop(columns=[col])
+                    st.session_state.logs.append(f"Dropped column '{col}'")
             elif "Replace" in suggestion and "with" in suggestion:
                 parts = suggestion.split(" ")
                 value = parts[1].strip("'")
-                replace_with = parts[3].strip("'")
-                cleaned_df = cleaned_df.replace(value, replace_with if replace_with != "NaN" else pd.NA)
+                new_value = parts[3].strip("'")
+                new_value = pd.NA if new_value.lower() == "nan" else new_value
+                cleaned_df = cleaned_df.replace(value, new_value)
+                st.session_state.logs.append(f"Replaced '{value}' with '{new_value}'")
         except Exception as e:
-            st.session_state.logs.append(f"Cleaning error: {str(e)}")
+            st.session_state.logs.append(f"Error applying suggestion '{suggestion}': {str(e)}")
     
     return cleaned_df
 

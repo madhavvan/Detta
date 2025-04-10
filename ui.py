@@ -14,8 +14,7 @@ def render_upload_page():
         st.write("File size limit: 200MB")
 
     if uploaded_file:
-        # File size validation
-        file_size_mb = os.path.getsize(uploaded_file.name) / (1024 * 1024) if os.path.exists(uploaded_file.name) else uploaded_file.size / (1024 * 1024)
+        file_size_mb = uploaded_file.size / (1024 * 1024)
         if file_size_mb > 200:
             st.error("File exceeds 200MB limit. Please upload a smaller file.")
             return
@@ -23,7 +22,7 @@ def render_upload_page():
         with st.spinner("Loading dataset..."):
             try:
                 if uploaded_file.name.endswith(".csv"):
-                    if file_size_mb > 50:  # Chunked processing for large files
+                    if file_size_mb > 50:
                         chunks = pd.read_csv(uploaded_file, chunksize=10000)
                         df = pd.concat([chunk for chunk in chunks], ignore_index=True)
                     else:
@@ -33,7 +32,7 @@ def render_upload_page():
                 st.session_state.df = df
                 st.session_state.cleaned_df = None
                 st.session_state.suggestions = []
-                st.session_state.cleaning_history = []  # Initialize action history
+                st.session_state.cleaning_history = []
                 st.toast(f"Loaded {uploaded_file.name} successfully!", icon="✅")
                 st.subheader("Dataset Preview")
                 st.dataframe(df.head(10), use_container_width=True, height=300)
@@ -48,7 +47,6 @@ def render_clean_page(openai_client):
     st.header("Clean Dataset")
     df = st.session_state.df
 
-    # Two-column layout
     col1, col2 = st.columns([2, 1])
     with col1:
         st.subheader("Original Preview")
@@ -65,29 +63,32 @@ def render_clean_page(openai_client):
                 suggestions = get_cleaning_suggestions(df, openai_client)
                 st.session_state.suggestions = suggestions
                 st.toast("Suggestions generated!", icon="🤖")
+                # Debug output to verify suggestions
+                st.write("AI Suggestions (Debug):", suggestions)
 
         if st.session_state.suggestions:
             with st.expander("AI Suggestions", expanded=True):
                 for i, (suggestion, reason) in enumerate(st.session_state.suggestions):
                     st.checkbox(f"{suggestion} ({reason})", key=f"sugg_{i}")
 
-    # Apply and Undo buttons
     col_apply, col_undo = st.columns(2)
     with col_apply:
         if st.button("Apply Cleaning", use_container_width=True):
             selected_suggestions = [sugg for i, sugg in enumerate(st.session_state.suggestions) if st.session_state.get(f"sugg_{i}", False)]
             with st.spinner("Applying cleaning operations..."):
                 cleaned_df = apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with)
-                st.session_state.cleaning_history.append((st.session_state.cleaned_df, selected_suggestions, columns_to_drop, replace_value, replace_with))
-                st.session_state.cleaned_df = cleaned_df
-                st.toast(f"Cleaning applied! New shape: {cleaned_df.shape}", icon="✅")
+                if cleaned_df.equals(df):
+                    st.warning("No changes applied. Check inputs or suggestions.")
+                else:
+                    st.session_state.cleaning_history.append((st.session_state.cleaned_df, selected_suggestions, columns_to_drop, replace_value, replace_with))
+                    st.session_state.cleaned_df = cleaned_df
+                    st.toast(f"Cleaning applied! New shape: {cleaned_df.shape}", icon="✅")
     with col_undo:
         if st.button("Undo Last Action", use_container_width=True, disabled=len(st.session_state.cleaning_history) == 0):
             last_state, *_ = st.session_state.cleaning_history.pop()
             st.session_state.cleaned_df = last_state if last_state is not None else df.copy()
             st.toast("Last cleaning action undone!", icon="↩️")
 
-    # Cleaned dataset display with sorting/filtering
     if st.session_state.cleaned_df is not None:
         st.markdown("---")
         st.subheader("Cleaned Dataset")
@@ -112,7 +113,7 @@ def render_insights_page(openai_client):
             insights = get_insights(df, openai_client)
             st.subheader("Key Insights")
             for i, insight in enumerate(insights):
-                if st.button(f"{insight}", key=f"insight_{i}"):  # Clickable insights
+                if st.button(f"{insight}", key=f"insight_{i}"):
                     st.session_state.chat_history.append({"user": f"Visualize: {insight}", "assistant": "Generating visualization..."})
                     st.session_state.selected_insight = insight
             st.toast("Insights generated!", icon="📊")
