@@ -36,7 +36,15 @@ def get_cleaning_suggestions(df, client):
         return [("AI unavailable", "No OpenAI API key provided")]
     
     summary = get_dataset_summary(df)
-    prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with detailed reasons. Examples: 'Fill missing values in [col] with mean', 'Drop column [col]', 'Replace [value] with [new_value]'."
+    prompt = (
+        f"Given this dataset summary:\n{summary}\n"
+        "Provide specific, actionable data cleaning suggestions in the following formats only:\n"
+        "- 'Fill missing values in [column_name] with [mean/median]'\n"
+        "- 'Drop column [column_name]'\n"
+        "- 'Replace [value] with [new_value]'\n"
+        "Include a reason after each suggestion with ' - Reason: [explanation]'. "
+        "List at least 3 suggestions if applicable."
+    )
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -44,13 +52,22 @@ def get_cleaning_suggestions(df, client):
             max_tokens=500
         )
         suggestions_text = response.choices[0].message.content.strip()
+        st.session_state.logs.append(f"Raw AI response: {suggestions_text}")  # Log raw response for debugging
+        
         suggestions = []
         for line in suggestions_text.split("\n"):
-            if line.strip() and ("Fill" in line or "Drop" in line or "Replace" in line):
+            line = line.strip()
+            if line and ("Fill missing values in" in line or "Drop column" in line or "Replace" in line):
                 parts = line.split(" - Reason: ") if " - Reason: " in line else [line, "No reason provided"]
                 suggestion = parts[0].strip("- ").strip()
                 reason = parts[1] if len(parts) > 1 else "No reason provided"
-                suggestions.append((suggestion, reason))
+                # Validate suggestion format
+                if (
+                    "Fill missing values in" in suggestion and "with" in suggestion or
+                    "Drop column" in suggestion or
+                    "Replace" in suggestion and "with" in suggestion
+                ):
+                    suggestions.append((suggestion, reason))
         return suggestions if suggestions else [("No valid suggestions generated", "AI response was empty or malformed")]
     except Exception as e:
         st.session_state.logs.append(f"Error in get_cleaning_suggestions: {str(e)}")
@@ -85,11 +102,15 @@ def apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace
                     elif method == "median":
                         cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].median())
                     st.session_state.logs.append(f"Filled missing in '{col}' with {method}")
+                else:
+                    st.session_state.logs.append(f"Column '{col}' not found in dataset")
             elif "Drop column" in suggestion:
                 col = suggestion.split("Drop column ")[1].strip()
                 if col in cleaned_df.columns:
                     cleaned_df = cleaned_df.drop(columns=[col])
                     st.session_state.logs.append(f"Dropped column '{col}'")
+                else:
+                    st.session_state.logs.append(f"Column '{col}' not found in dataset")
             elif "Replace" in suggestion and "with" in suggestion:
                 parts = suggestion.split(" ")
                 value = parts[1].strip("'")
