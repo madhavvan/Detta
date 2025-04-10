@@ -68,10 +68,10 @@ def get_dataset_summary(df: pd.DataFrame) -> str:
         logger.error(f"Error in get_dataset_summary: {str(e)}")
         return f"Error: {str(e)}"
 
-def get_cleaning_suggestions(df: pd.DataFrame, client: Optional[OpenAI] = None) -> List[Tuple[str, str]]:
-    """Generate AI-driven cleaning suggestions with explanations using GPT-4o."""
+def get_cleaning_suggestions(df: pd.DataFrame, client: Optional[OpenAI] = None) -> List[Tuple[str, str, float]]:
+    """Generate AI-driven cleaning suggestions with explanations and confidence using GPT-4o."""
     if not AI_AVAILABLE or client is None:
-        return [("AI unavailable", "No OpenAI API key provided")]
+        return [("AI unavailable", "No OpenAI API key provided", 0.2)]
 
     try:
         analysis = analyze_dataset(df)
@@ -107,11 +107,12 @@ def get_cleaning_suggestions(df: pd.DataFrame, client: Optional[OpenAI] = None) 
         for line in suggestions_text.split("\n"):
             if line.strip() and " - " in line:
                 suggestion, explanation = line.split(" - ", 1)
-                suggestions.append((suggestion.strip(), explanation.strip()))
-        return suggestions if suggestions else [("No suggestions", "No issues detected")]
+                # Assign a default confidence score of 0.9 for valid suggestions
+                suggestions.append((suggestion.strip(), explanation.strip(), 0.9))
+        return suggestions if suggestions else [("No suggestions", "No issues detected", 0.9)]
     except Exception as e:
         logger.error(f"Error in get_cleaning_suggestions: {str(e)}")
-        return [("Error generating suggestions", str(e))]
+        return [("Error generating suggestions", str(e), 0.2)]
 
 @st.cache_data
 def get_insights(df: pd.DataFrame) -> List[str]:
@@ -179,7 +180,7 @@ def get_visualization_suggestions(df: pd.DataFrame) -> List[Dict[str, str]]:
 
 def apply_cleaning_operations(
     df: pd.DataFrame,
-    selected_suggestions: List[Tuple[str, str]],
+    selected_suggestions: List[Tuple[str, str, float]],  # Updated to expect 3-tuple
     columns_to_drop: List[str],
     options: Dict[str, str],
     replace_value: str,
@@ -222,29 +223,29 @@ def apply_cleaning_operations(
             logs.append(f"Replaced '{replace_value}' with '{replace_with}' in {replace_scope} ({replace_count} instances)")
 
         # Apply AI suggestions
-        for suggestion, explanation in selected_suggestions:
+        for suggestion, explanation, confidence in selected_suggestions:
             if "Replace '?' with NaN" in suggestion:
                 if '?' in cleaned_df.values:
                     cleaned_df.replace('?', np.nan, inplace=True)
-                    logs.append(f"Replaced '?' with NaN - {explanation}")
+                    logs.append(f"Replaced '?' with NaN - {explanation} (Confidence: {confidence:.2f})")
                 else:
-                    logs.append(f"No '?' found - {explanation}")
+                    logs.append(f"No '?' found - {explanation} (Confidence: {confidence:.2f})")
 
             elif "Handle special characters in columns" in suggestion:
                 special_cols = [col for col in cleaned_df.columns if any(c in col for c in "#@$%^&* ()")]
                 if special_cols:
                     cleaned_df.columns = [re.sub(r'[#@$%^&* ()]', '_', col) for col in cleaned_df.columns]
-                    logs.append(f"Replaced special characters with underscores in {special_cols} - {explanation}")
+                    logs.append(f"Replaced special characters with underscores in {special_cols} - {explanation} (Confidence: {confidence:.2f})")
                 else:
-                    logs.append(f"No special character columns - {explanation}")
+                    logs.append(f"No special character columns - {explanation} (Confidence: {confidence:.2f})")
 
             elif "Remove fully empty rows" in suggestion:
                 empty_rows = cleaned_df.isna().all(axis=1)
                 if empty_rows.any():
                     cleaned_df = cleaned_df[~empty_rows]
-                    logs.append(f"Dropped {empty_rows.sum()} empty rows - {explanation}")
+                    logs.append(f"Dropped {empty_rows.sum()} empty rows - {explanation} (Confidence: {confidence:.2f})")
                 else:
-                    logs.append(f"No empty rows - {explanation}")
+                    logs.append(f"No empty rows - {explanation} (Confidence: {confidence:.2f})")
 
             elif "Fill missing values" in suggestion:
                 col_match = re.search(r"in\s+(\S+)\s+with\s+(mean|median|mode)", suggestion)
@@ -253,16 +254,16 @@ def apply_cleaning_operations(
                     if col in cleaned_df.columns and cleaned_df[col].isna().any():
                         if method == "mean" and cleaned_df[col].dtype in ['int64', 'float64']:
                             cleaned_df[col].fillna(cleaned_df[col].mean(), inplace=True)
-                            logs.append(f"Filled {col} with mean - {explanation}")
+                            logs.append(f"Filled {col} with mean - {explanation} (Confidence: {confidence:.2f})")
                         elif method == "median" and cleaned_df[col].dtype in ['int64', 'float64']:
                             cleaned_df[col].fillna(cleaned_df[col].median(), inplace=True)
-                            logs.append(f"Filled {col} with median - {explanation}")
+                            logs.append(f"Filled {col} with median - {explanation} (Confidence: {confidence:.2f})")
                         elif method == "mode":
                             mode_val = cleaned_df[col].mode().iloc[0] if not cleaned_df[col].mode().empty else np.nan
                             cleaned_df[col].fillna(mode_val, inplace=True)
-                            logs.append(f"Filled {col} with mode - {explanation}")
+                            logs.append(f"Filled {col} with mode - {explanation} (Confidence: {confidence:.2f})")
                     else:
-                        logs.append(f"No missing values in {col} - {explanation}")
+                        logs.append(f"No missing values in {col} - {explanation} (Confidence: {confidence:.2f})")
 
             elif "Encode categorical column" in suggestion:
                 col_match = re.search(r"column:\s+(\S+)", suggestion)
@@ -270,14 +271,14 @@ def apply_cleaning_operations(
                     col = col_match.group(1)
                     if col in cleaned_df.columns and cleaned_df[col].dtype == 'object':
                         cleaned_df = pd.get_dummies(cleaned_df, columns=[col], prefix=col)
-                        logs.append(f"Encoded {col} - {explanation}")
+                        logs.append(f"Encoded {col} - {explanation} (Confidence: {confidence:.2f})")
                     else:
-                        logs.append(f"No categorical {col} - {explanation}")
+                        logs.append(f"No categorical {col} - {explanation} (Confidence: {confidence:.2f})")
 
             elif "Remove duplicate rows" in suggestion:
                 initial_rows = len(cleaned_df)
                 cleaned_df.drop_duplicates(inplace=True)
-                logs.append(f"Removed {initial_rows - len(cleaned_df)} duplicates - {explanation}")
+                logs.append(f"Removed {initial_rows - len(cleaned_df)} duplicates - {explanation} (Confidence: {confidence:.2f})")
 
         return cleaned_df, logs
     except Exception as e:
