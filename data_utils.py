@@ -107,7 +107,6 @@ def get_cleaning_suggestions(df: pd.DataFrame, client: Optional[OpenAI] = None) 
         for line in suggestions_text.split("\n"):
             if line.strip() and " - " in line:
                 suggestion, explanation = line.split(" - ", 1)
-                # Assign a default confidence score of 0.9 for valid suggestions
                 suggestions.append((suggestion.strip(), explanation.strip(), 0.9))
         return suggestions if suggestions else [("No suggestions", "No issues detected", 0.9)]
     except Exception as e:
@@ -180,14 +179,14 @@ def get_visualization_suggestions(df: pd.DataFrame) -> List[Dict[str, str]]:
 
 def apply_cleaning_operations(
     df: pd.DataFrame,
-    selected_suggestions: List[Tuple[str, str, float]],  # Updated to expect 3-tuple
+    selected_suggestions: List[Tuple[str, str, float]],
     columns_to_drop: List[str],
-    options: Dict[str, str],
-    replace_value: str,
-    replace_with: str,
-    replace_scope: str,
-    encode_cols: List[str],
-    encode_method: str,
+    options: Dict[str, str] = None,
+    replace_value: str = "",
+    replace_with: str = "",  # Made optional with default
+    replace_scope: str = "All columns",  # Made optional with default
+    encode_cols: List[str] = None,  # Made optional with default
+    encode_method: str = "Label Encoding",  # Made optional with default
     auto_clean: bool = False,
     enrich_col: Optional[str] = None,
     enrich_api_key: Optional[str] = None,
@@ -198,6 +197,8 @@ def apply_cleaning_operations(
     """Apply selected cleaning operations to the dataset."""
     cleaned_df = df.copy()
     logs = []
+    options = options or {}  # Default to empty dict if None
+    encode_cols = encode_cols or []  # Default to empty list if None
 
     try:
         # Manual column dropping
