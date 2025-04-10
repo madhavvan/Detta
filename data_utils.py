@@ -5,7 +5,6 @@ import streamlit as st
 import httpx
 from scipy.stats import skew
 
-# Remove @st.cache_data from initialize_openai_client since it returns an unserializable object
 def initialize_openai_client():
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -137,7 +136,7 @@ def get_visualization_suggestions(df, client):
         st.session_state.logs.append(f"Error in get_visualization_suggestions: {str(e)}")
         return []
 
-@st.cache_data
+# Remove @st.cache_data from chat_with_gpt to avoid hashing issues
 def chat_with_gpt(df, message, client):
     if client is None:
         return "AI unavailable: No OpenAI API key provided"

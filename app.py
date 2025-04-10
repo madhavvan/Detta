@@ -51,6 +51,8 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 if "vis_suggestions" not in st.session_state:
     st.session_state.vis_suggestions = []
+if "chat_reset" not in st.session_state:
+    st.session_state.chat_reset = 0  # Counter to reset chat input
 
 # Page routing
 with st.container():
@@ -75,9 +77,10 @@ with st.sidebar:
             auto_suggestions = get_auto_suggestions(st.session_state.df)
             selected_auto = st.selectbox("Quick Questions", [""] + auto_suggestions)
             if selected_auto:
-                st.session_state.chat_input = selected_auto
+                st.session_state.chat_input_value = selected_auto
 
-        user_input = st.chat_input("Ask a data question", key="chat_input")
+        # Use a unique key to reset chat input
+        user_input = st.chat_input("Ask a data question", key=f"chat_input_{st.session_state.chat_reset}")
         if user_input and (st.session_state.df is not None or st.session_state.cleaned_df is not None):
             df_to_use = st.session_state.cleaned_df if st.session_state.cleaned_df is not None else st.session_state.df
             with st.spinner("Thinking..."):
@@ -85,7 +88,7 @@ with st.sidebar:
                     return chat_with_gpt(df_to_use, user_input, openai_client)
                 response = asyncio.run(get_response())
                 st.session_state.chat_history.append({"user": user_input, "assistant": response})
-                st.session_state.chat_input = ""  # Clear input
+                st.session_state.chat_reset += 1  # Increment to reset input
 
         # Interactive chat history
         search_term = st.text_input("Search chat history")
