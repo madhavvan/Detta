@@ -59,6 +59,21 @@ def analyze_dataset(df: pd.DataFrame) -> Dict[str, Union[int, List[str], bool]]:
         return {}
 
 @st.cache_data
+def get_dataset_summary(df: pd.DataFrame) -> str:
+    """Generate a summary of the dataset."""
+    try:
+        summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
+        for col in df.columns:
+            missing = df[col].isna().sum()
+            dtype = str(df[col].dtype)
+            unique = df[col].nunique()
+            summary += f"{col}: {dtype}, {missing} missing, {unique} unique\n"
+        return summary
+    except Exception as e:
+        logger.error(f"Error in get_dataset_summary: {str(e)}")
+        return f"Error: {str(e)}"
+
+@st.cache_data
 def get_cleaning_suggestions(df: pd.DataFrame) -> List[Tuple[str, str]]:
     """Generate AI-driven cleaning suggestions with explanations using GPT-4o."""
     if not AI_AVAILABLE:
@@ -129,6 +144,44 @@ def get_insights(df: pd.DataFrame) -> List[str]:
     except Exception as e:
         logger.error(f"Error in get_insights: {str(e)}")
         return [f"Error generating insights: {str(e)}"]
+
+@st.cache_data
+def get_visualization_suggestions(df: pd.DataFrame) -> List[Dict[str, str]]:
+    """Suggest visualizations based on dataset analysis."""
+    if not AI_AVAILABLE:
+        return []
+
+    try:
+        summary = get_dataset_summary(df)
+        prompt = f"""
+        You are an expert data analyst. Based on this dataset summary, suggest 3 visualizations:
+        - Summary: {summary}
+        Format each suggestion as:
+        - "Chart: [type], X: [col], Y: [col] - Reason: [explanation]"
+        Examples:
+        - "Chart: Bar, X: category, Y: sales - Reason: Compare sales across categories."
+        - "Chart: Line, X: date, Y: revenue - Reason: Visualize revenue trends over time."
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        suggestions_text = response.choices[0].message.content.strip()
+        suggestions = []
+        for line in suggestions_text.split("\n"):
+            if "Chart:" in line:
+                parts = line.split(" - Reason: ")
+                desc = parts[0].strip()
+                reason = parts[1].strip() if len(parts) > 1 else "No reason provided"
+                chart_type = desc.split("Chart:")[1].split(",")[0].strip()
+                x = desc.split("X:")[1].split(",")[0].strip()
+                y = desc.split("Y:")[1].strip()
+                suggestions.append({"description": desc, "chart_type": chart_type, "x": x, "y": y, "reason": reason})
+        return suggestions
+    except Exception as e:
+        logger.error(f"Error in get_visualization_suggestions: {str(e)}")
+        return []
 
 def apply_cleaning_operations(
     df: pd.DataFrame,
@@ -211,7 +264,7 @@ def apply_cleaning_operations(
                             cleaned_df[col].fillna(cleaned_df[col].median(), inplace=True)
                             logs.append(f"Filled {col} with median - {explanation}")
                         elif method == "mode":
-                            mode_val = cleaned_df[col].mode().iloc[0] if not cleansed_df[col].mode().empty else np.nan
+                            mode_val = cleaned_df[col].mode().iloc[0] if not cleaned_df[col].mode().empty else np.nan
                             cleaned_df[col].fillna(mode_val, inplace=True)
                             logs.append(f"Filled {col} with mode - {explanation}")
                     else:
@@ -246,7 +299,7 @@ def chat_with_gpt(df: pd.DataFrame, message: str, max_tokens: int = 100) -> str:
         return "I'm your assistant, built for data analysis."
     
     try:
-        summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}"
+        summary = get_dataset_summary(df)
         prompt = f"Dataset summary:\n{summary}\nQuestion: {message}"
         response = client.chat.completions.create(
             model="gpt-4o",
