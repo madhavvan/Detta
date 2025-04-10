@@ -68,10 +68,9 @@ def get_dataset_summary(df: pd.DataFrame) -> str:
         logger.error(f"Error in get_dataset_summary: {str(e)}")
         return f"Error: {str(e)}"
 
-@st.cache_data
-def get_cleaning_suggestions(df: pd.DataFrame) -> List[Tuple[str, str]]:
+def get_cleaning_suggestions(df: pd.DataFrame, client: Optional[OpenAI] = None) -> List[Tuple[str, str]]:
     """Generate AI-driven cleaning suggestions with explanations using GPT-4o."""
-    if not AI_AVAILABLE:
+    if not AI_AVAILABLE or client is None:
         return [("AI unavailable", "No OpenAI API key provided")]
 
     try:
