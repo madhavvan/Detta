@@ -18,27 +18,22 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(handler)
 
-# Securely load OpenAI API key
-api_key = None
-try:
-    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OpenAI API key not found.")
-    logger.info("Successfully loaded OPENAI_API_KEY")
-except Exception as e:
-    logger.error(f"Failed to load OpenAI API key: {str(e)}")
-    st.error("OpenAI API key missing. Configure it in secrets.toml or environment variables.")
-
-# Initialize OpenAI client
-client = None
-if api_key:
+def initialize_openai_client() -> Optional[OpenAI]:
+    """Initialize OpenAI client with API key."""
+    api_key = None
     try:
-        client = OpenAI(api_key=api_key, http_client=httpx.Client())
-        logger.info("OpenAI client initialized.")
+        api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OpenAI API key not found.")
+        logger.info("Successfully loaded OPENAI_API_KEY")
+        return OpenAI(api_key=api_key, http_client=httpx.Client())
     except Exception as e:
-        logger.error(f"Failed to initialize OpenAI client: {str(e)}")
-        client = None
+        logger.error(f"Failed to load OpenAI API key: {str(e)}")
+        st.error("OpenAI API key missing. Configure it in secrets.toml or environment variables.")
+        return None
 
+# Initialize OpenAI client globally
+client = initialize_openai_client()
 AI_AVAILABLE = client is not None
 
 def analyze_dataset(df: pd.DataFrame) -> Dict[str, Union[int, List[str], bool]]:
