@@ -120,13 +120,14 @@ with st.sidebar:
 
 # === GUIDED TOUR ===
 if not st.session_state.onboarding_seen:
-    with st.popover("Welcome to Detta!", open=True):
-        st.write("1. **Upload**: Start by uploading your CSV or Excel file.")
-        st.write("2. **Clean**: Use manual tools or AI suggestions to refine your data.")
-        st.write("3. **Explore**: Generate insights and visualize your dataset.")
-        if st.button("Start Using Detta"):
-            st.session_state.onboarding_seen = True
-            st.rerun()
+    if st.button("Welcome to Detta!", key="tour_button"):
+        with st.popover("Welcome to Detta!"):
+            st.write("1. **Upload**: Start by uploading your CSV or Excel file.")
+            st.write("2. **Clean**: Use manual tools or AI suggestions to refine your data.")
+            st.write("3. **Explore**: Generate insights and visualize your dataset.")
+            if st.button("Start Using Detta", key="start_tour"):
+                st.session_state.onboarding_seen = True
+                st.rerun()
 
 # === PAGE ROUTING ===
 with st.container():
