@@ -104,6 +104,32 @@ def get_cleaning_suggestions(df: pd.DataFrame) -> List[Tuple[str, str]]:
         logger.error(f"Error in get_cleaning_suggestions: {str(e)}")
         return [("Error generating suggestions", str(e))]
 
+@st.cache_data
+def get_insights(df: pd.DataFrame) -> List[str]:
+    """Generate natural language insights about the dataset using GPT-4o."""
+    if not AI_AVAILABLE:
+        return ["AI unavailable: No OpenAI API key provided"]
+
+    try:
+        analysis = analyze_dataset(df)
+        prompt = f"""
+        You are an AI data analyst. Analyze this dataset and provide 3-5 human-readable insights in plain English:
+        - Dataset preview (first 10 rows): {df.head(10).to_string()}
+        - Analysis: {analysis}
+        Examples:
+        - "Column X has a strong correlation with Column Y, suggesting a potential relationship."
+        - "30% of the data in Column Z is missing, which may impact analysis."
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip().split("\n")
+    except Exception as e:
+        logger.error(f"Error in get_insights: {str(e)}")
+        return [f"Error generating insights: {str(e)}"]
+
 def apply_cleaning_operations(
     df: pd.DataFrame,
     selected_suggestions: List[Tuple[str, str]],
@@ -185,7 +211,7 @@ def apply_cleaning_operations(
                             cleaned_df[col].fillna(cleaned_df[col].median(), inplace=True)
                             logs.append(f"Filled {col} with median - {explanation}")
                         elif method == "mode":
-                            mode_val = cleaned_df[col].mode().iloc[0] if not cleaned_df[col].mode().empty else np.nan
+                            mode_val = cleaned_df[col].mode().iloc[0] if not cleansed_df[col].mode().empty else np.nan
                             cleaned_df[col].fillna(mode_val, inplace=True)
                             logs.append(f"Filled {col} with mode - {explanation}")
                     else:
