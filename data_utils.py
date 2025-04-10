@@ -1,221 +1,238 @@
-# === IMPORTS ===
 import pandas as pd
-import dask.dataframe as dd
+import numpy as np
+import openai
 from openai import OpenAI
-import os
 import streamlit as st
-import httpx
-from scipy.stats import skew
-from concurrent.futures import ThreadPoolExecutor
+import re
 import logging
-from typing import List, Tuple, Union, Dict, Any
+from logging.handlers import RotatingFileHandler
+import os
+import httpx
+from typing import Dict, List, Tuple, Optional, Union
 
-# === AI CLIENT ===
-def initialize_openai_client() -> OpenAI | None:
-    """Initialize OpenAI client with API key."""
+# Set up logging with rotation
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = RotatingFileHandler('data_utils.log', maxBytes=5*1024*1024, backupCount=3)
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(handler)
+
+# Securely load OpenAI API key
+api_key = None
+try:
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        logging.warning("No OpenAI API key provided.")
-        return None
+        raise ValueError("OpenAI API key not found.")
+    logger.info("Successfully loaded OPENAI_API_KEY")
+except Exception as e:
+    logger.error(f"Failed to load OpenAI API key: {str(e)}")
+    st.error("OpenAI API key missing. Configure it in secrets.toml or environment variables.")
+
+# Initialize OpenAI client
+client = None
+if api_key:
     try:
-        return OpenAI(api_key=api_key, http_client=httpx.Client())
+        client = OpenAI(api_key=api_key, http_client=httpx.Client())
+        logger.info("OpenAI client initialized.")
     except Exception as e:
-        logging.error(f"OpenAI client initialization failed: {str(e)}")
-        return None
+        logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+        client = None
 
-# === DATASET SUMMARY ===
+AI_AVAILABLE = client is not None
+
+def analyze_dataset(df: pd.DataFrame) -> Dict[str, Union[int, List[str], bool]]:
+    """Analyze dataset properties for AI suggestions."""
+    try:
+        analysis = {
+            "has_question_marks": '?' in df.values,
+            "special_char_cols": [col for col in df.columns if any(c in col for c in "#@$%^&* ()")],
+            "empty_rows": df.isna().all(axis=1).sum(),
+            "missing_cols": df.columns[df.isna().any()].tolist(),
+            "numeric_cols": df.select_dtypes(include=['int64', 'float64']).columns.tolist(),
+            "cat_cols": df.select_dtypes(include=['object', 'category']).columns.tolist(),
+            "duplicates": df.duplicated().sum()
+        }
+        return analysis
+    except Exception as e:
+        logger.error(f"Error in analyze_dataset: {str(e)}")
+        return {}
+
 @st.cache_data
-def get_dataset_summary(df: Union[pd.DataFrame, dd.DataFrame]) -> str:
-    """Generate a summary of the dataset."""
-    if isinstance(df, dd.DataFrame):
-        df = df.compute()
-    summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
-    for col in df.columns:
-        missing = df[col].isna().sum()
-        dtype = str(df[col].dtype)
-        unique = df[col].nunique()
-        if df[col].dtype in ["int64", "float64"]:
-            sk = skew(df[col].dropna())
-            summary += f"{col}: {dtype}, {missing} missing, {unique} unique, skew={sk:.2f}\n"
-        else:
+def get_cleaning_suggestions(df: pd.DataFrame) -> List[Tuple[str, str]]:
+    """Generate AI-driven cleaning suggestions with explanations using GPT-4o."""
+    if not AI_AVAILABLE:
+        return [("AI unavailable", "No OpenAI API key provided")]
+
+    try:
+        analysis = analyze_dataset(df)
+        summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
+        for col in df.columns:
+            missing = df[col].isna().sum()
+            dtype = str(df[col].dtype)
+            unique = df[col].nunique()
             summary += f"{col}: {dtype}, {missing} missing, {unique} unique\n"
-    return summary
 
-# === AI SUGGESTIONS ===
-def get_cleaning_suggestions(df: Union[pd.DataFrame, dd.DataFrame], client: OpenAI | None) -> List[Tuple[str, str, float]]:
-    """Fetch and validate cleaning suggestions from GPT-4o."""
-    if client is None:
-        return [("AI unavailable", "No OpenAI API key provided", 0.0)]
-    
-    summary = get_dataset_summary(df)
-    prompt = (
-        f"Given this dataset summary:\n{summary}\n"
-        "Provide specific, actionable data cleaning suggestions in these formats only:\n"
-        "- 'Fill missing values in [column_name] with [mean/median]'\n"
-        "- 'Drop column [column_name]'\n"
-        "- 'Replace [value] with [new_value]'\n"
-        "Include a reason after each suggestion with ' - Reason: [explanation]'."
-    )
-    
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future = executor.submit(client.chat.completions.create, model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=500)
-        try:
-            response = future.result(timeout=10)
-            suggestions_text = response.choices[0].message.content.strip()
-            logging.info(f"Raw AI response: {suggestions_text}")
-        except Exception as e:
-            logging.error(f"Error in GPT-4o call: {str(e)}")
-            return [("Error generating suggestions", str(e), 0.0)]
+        prompt = f"""
+        You are an expert data analyst. Based on this dataset summary, provide specific, actionable cleaning suggestions:
+        - Summary: {summary}
+        - Analysis: {analysis}
+        Use these exact formats only:
+        1. "Replace '?' with NaN" - "Converts ambiguous markers to missing values."
+        2. "Handle special characters in columns: [list]" - "Improves column name usability."
+        3. "Remove fully empty rows" - "Eliminates useless data points."
+        4. "Fill missing values in [col] with [mean/median/mode]" - "Restores data completeness."
+        5. "Encode categorical column: [col]" - "Prepares for numerical analysis."
+        6. "Remove duplicate rows" - "Ensures data uniqueness."
+        Provide suggestions only if applicable. Format each as: "Suggestion - Explanation"
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500
+        )
+        suggestions_text = response.choices[0].message.content.strip()
+        logger.info(f"Raw AI response: {suggestions_text}")
 
-    suggestions = []
-    df_cols = df.columns if isinstance(df, pd.DataFrame) else df.columns.compute()
-    for line in suggestions_text.split("\n"):
-        line = line.strip()
-        if line and ("Fill missing values in" in line or "Drop column" in line or "Replace" in line):
-            parts = line.split(" - Reason: ") if " - Reason: " in line else [line, "No reason provided"]
-            suggestion = parts[0].strip("- ").strip()
-            reason = parts[1] if len(parts) > 1 else "No reason provided"
-            confidence = 0.9  # Default high confidence
-            
-            # Validation
-            if "Fill missing values in" in suggestion:
-                col = suggestion.split("in ")[1].split(" with")[0].strip()
-                method = suggestion.split("with ")[1].strip().lower()
-                if col not in df_cols:
-                    confidence = 0.2
-                    reason += " (Column not found)"
-                elif df[col].dtype not in ["int64", "float64"]:
-                    confidence = 0.3
-                    reason += " (Column not numeric)"
-            elif "Drop column" in suggestion:
-                col = suggestion.split("Drop column ")[1].strip()
-                if col not in df_cols:
-                    confidence = 0.2
-                    reason += " (Column not found)"
-            elif "Replace" in suggestion:
-                value = suggestion.split(" ")[1].strip("'")
-                if not df.isin([value]).any().any():
-                    confidence = 0.4
-                    reason += " (Value not found in dataset)"
-            
-            suggestions.append((suggestion, reason, confidence))
-    
-    return suggestions if suggestions else [("No valid suggestions generated", "AI response was empty or malformed", 0.0)]
+        suggestions = []
+        for line in suggestions_text.split("\n"):
+            if line.strip() and " - " in line:
+                suggestion, explanation = line.split(" - ", 1)
+                suggestions.append((suggestion.strip(), explanation.strip()))
+        return suggestions if suggestions else [("No suggestions", "No issues detected")]
+    except Exception as e:
+        logger.error(f"Error in get_cleaning_suggestions: {str(e)}")
+        return [("Error generating suggestions", str(e))]
 
-# === CLEANING OPERATIONS ===
-def apply_cleaning_operations(df: Union[pd.DataFrame, dd.DataFrame], selected_suggestions: List[Tuple[str, str, float]], 
-                              columns_to_drop: List[str], replace_value: str, replace_with: str) -> Union[pd.DataFrame, dd.DataFrame]:
-    """Apply manual and AI-driven cleaning operations."""
+def apply_cleaning_operations(
+    df: pd.DataFrame,
+    selected_suggestions: List[Tuple[str, str]],
+    columns_to_drop: List[str],
+    options: Dict[str, str],
+    replace_value: str,
+    replace_with: str,
+    replace_scope: str,
+    encode_cols: List[str],
+    encode_method: str,
+    auto_clean: bool = False,
+    enrich_col: Optional[str] = None,
+    enrich_api_key: Optional[str] = None,
+    train_ml: bool = False,
+    target_col: Optional[str] = None,
+    feature_cols: Optional[List[str]] = None
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Apply selected cleaning operations to the dataset."""
     cleaned_df = df.copy()
-    is_dask = isinstance(df, dd.DataFrame)
+    logs = []
 
-    # Manual operations
-    if columns_to_drop:
-        cleaned_df = cleaned_df.drop(columns=columns_to_drop)
-        logging.info(f"Dropped columns: {columns_to_drop}")
-    if replace_value and replace_with:
-        new_value = pd.NA if replace_with.lower() == "nan" else replace_with
-        cleaned_df = cleaned_df.replace(replace_value, new_value)
-        logging.info(f"Replaced '{replace_value}' with '{new_value}'")
+    try:
+        # Manual column dropping
+        if columns_to_drop:
+            cleaned_df.drop(columns=columns_to_drop, inplace=True, errors='ignore')
+            logs.append(f"Dropped columns: {columns_to_drop}")
 
-    # AI suggestions
-    for suggestion, reason, confidence in selected_suggestions:
-        try:
-            if "Fill missing values in" in suggestion:
-                col = suggestion.split("in ")[1].split(" with")[0].strip()
-                method = suggestion.split("with ")[1].strip().lower()
-                if col in cleaned_df.columns:
-                    if method == "mean":
-                        cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].mean() if not is_dask else cleaned_df[col].mean().compute())
-                    elif method == "median":
-                        cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].median() if not is_dask else cleaned_df[col].median().compute())
-                    logging.info(f"Filled missing in '{col}' with {method}, confidence: {confidence}")
-            elif "Drop column" in suggestion:
-                col = suggestion.split("Drop column ")[1].strip()
-                if col in cleaned_df.columns:
-                    cleaned_df = cleaned_df.drop(columns=[col])
-                    logging.info(f"Dropped column '{col}', confidence: {confidence}")
-            elif "Replace" in suggestion:
-                parts = suggestion.split(" ")
-                value = parts[1].strip("'")
-                new_value = parts[3].strip("'")
-                new_value = pd.NA if new_value.lower() == "nan" else new_value
-                cleaned_df = cleaned_df.replace(value, new_value)
-                logging.info(f"Replaced '{value}' with '{new_value}', confidence: {confidence}")
-        except Exception as e:
-            logging.error(f"Error applying suggestion '{suggestion}': {str(e)}")
-    
-    return cleaned_df
+        # Manual value replacement
+        if replace_value and replace_with:
+            target_cols = (
+                cleaned_df.columns if replace_scope == "All columns" else
+                cleaned_df.select_dtypes(include=['int64', 'float64']).columns if replace_scope == "Numeric columns" else
+                cleaned_df.select_dtypes(include=['object', 'category']).columns
+            )
+            replace_count = 0
+            for col in target_cols:
+                matches = cleaned_df[col] == replace_value
+                replace_count += matches.sum()
+                if replace_with.lower() == "nan":
+                    cleaned_df.loc[matches, col] = np.nan
+                else:
+                    cleaned_df.loc[matches, col] = replace_with
+            logs.append(f"Replaced '{replace_value}' with '{replace_with}' in {replace_scope} ({replace_count} instances)")
 
-# === INSIGHTS ===
-@st.cache_data
-def get_insights(df: Union[pd.DataFrame, dd.DataFrame], client: OpenAI | None) -> List[str]:
-    """Generate dataset insights."""
-    if client is None:
-        return ["AI unavailable: No OpenAI API key provided"]
-    summary = get_dataset_summary(df)
-    prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights with statistical reasoning."
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future = executor.submit(client.chat.completions.create, model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=300)
-        try:
-            response = future.result(timeout=10)
-            return response.choices[0].message.content.strip().split("\n")
-        except Exception as e:
-            logging.error(f"Error in get_insights: {str(e)}")
-            return ["Error generating insights"]
+        # Apply AI suggestions
+        for suggestion, explanation in selected_suggestions:
+            if "Replace '?' with NaN" in suggestion:
+                if '?' in cleaned_df.values:
+                    cleaned_df.replace('?', np.nan, inplace=True)
+                    logs.append(f"Replaced '?' with NaN - {explanation}")
+                else:
+                    logs.append(f"No '?' found - {explanation}")
 
-# === VISUALIZATION SUGGESTIONS ===
-@st.cache_data
-def get_visualization_suggestions(df: Union[pd.DataFrame, dd.DataFrame], client: OpenAI | None) -> List[Dict[str, Any]]:
-    """Suggest visualizations."""
-    if client is None:
-        return []
-    summary = get_dataset_summary(df)
-    prompt = f"Given this dataset summary:\n{summary}\nSuggest 3 visualizations (chart type, X-axis, Y-axis) with reasons."
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future = executor.submit(client.chat.completions.create, model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=200)
-        try:
-            response = future.result(timeout=10)
-            suggestions_text = response.choices[0].message.content.strip()
-            suggestions = []
-            for line in suggestions_text.split("\n"):
-                if "Chart:" in line:
-                    parts = line.split(" - ")
-                    desc = parts[0].strip()
-                    reason = parts[1].strip() if len(parts) > 1 else "No reason provided"
-                    chart_type = desc.split("Chart:")[1].split(",")[0].strip()
-                    x = desc.split("X:")[1].split(",")[0].strip()
-                    y = desc.split("Y:")[1].strip()
-                    suggestions.append({"description": desc, "chart_type": chart_type, "x": x, "y": y, "reason": reason})
-            return suggestions
-        except Exception as e:
-            logging.error(f"Error in get_visualization_suggestions: {str(e)}")
-            return []
+            elif "Handle special characters in columns" in suggestion:
+                special_cols = [col for col in cleaned_df.columns if any(c in col for c in "#@$%^&* ()")]
+                if special_cols:
+                    cleaned_df.columns = [re.sub(r'[#@$%^&* ()]', '_', col) for col in cleaned_df.columns]
+                    logs.append(f"Replaced special characters with underscores in {special_cols} - {explanation}")
+                else:
+                    logs.append(f"No special character columns - {explanation}")
 
-# === CHAT ===
-def chat_with_gpt(df: Union[pd.DataFrame, dd.DataFrame], message: str, client: OpenAI | None) -> str:
-    """Handle chat queries."""
-    if client is None:
+            elif "Remove fully empty rows" in suggestion:
+                empty_rows = cleaned_df.isna().all(axis=1)
+                if empty_rows.any():
+                    cleaned_df = cleaned_df[~empty_rows]
+                    logs.append(f"Dropped {empty_rows.sum()} empty rows - {explanation}")
+                else:
+                    logs.append(f"No empty rows - {explanation}")
+
+            elif "Fill missing values" in suggestion:
+                col_match = re.search(r"in\s+(\S+)\s+with\s+(mean|median|mode)", suggestion)
+                if col_match:
+                    col, method = col_match.groups()
+                    if col in cleaned_df.columns and cleaned_df[col].isna().any():
+                        if method == "mean" and cleaned_df[col].dtype in ['int64', 'float64']:
+                            cleaned_df[col].fillna(cleaned_df[col].mean(), inplace=True)
+                            logs.append(f"Filled {col} with mean - {explanation}")
+                        elif method == "median" and cleaned_df[col].dtype in ['int64', 'float64']:
+                            cleaned_df[col].fillna(cleaned_df[col].median(), inplace=True)
+                            logs.append(f"Filled {col} with median - {explanation}")
+                        elif method == "mode":
+                            mode_val = cleaned_df[col].mode().iloc[0] if not cleaned_df[col].mode().empty else np.nan
+                            cleaned_df[col].fillna(mode_val, inplace=True)
+                            logs.append(f"Filled {col} with mode - {explanation}")
+                    else:
+                        logs.append(f"No missing values in {col} - {explanation}")
+
+            elif "Encode categorical column" in suggestion:
+                col_match = re.search(r"column:\s+(\S+)", suggestion)
+                if col_match:
+                    col = col_match.group(1)
+                    if col in cleaned_df.columns and cleaned_df[col].dtype == 'object':
+                        cleaned_df = pd.get_dummies(cleaned_df, columns=[col], prefix=col)
+                        logs.append(f"Encoded {col} - {explanation}")
+                    else:
+                        logs.append(f"No categorical {col} - {explanation}")
+
+            elif "Remove duplicate rows" in suggestion:
+                initial_rows = len(cleaned_df)
+                cleaned_df.drop_duplicates(inplace=True)
+                logs.append(f"Removed {initial_rows - len(cleaned_df)} duplicates - {explanation}")
+
+        return cleaned_df, logs
+    except Exception as e:
+        logger.error(f"Error in apply_cleaning_operations: {str(e)}")
+        return df, [f"Error: {str(e)}"]
+
+def chat_with_gpt(df: pd.DataFrame, message: str, max_tokens: int = 100) -> str:
+    """Chat with GPT about the dataset."""
+    if not AI_AVAILABLE:
         return "AI unavailable: No OpenAI API key provided"
-    summary = get_dataset_summary(df)
-    if "correlation" in message.lower():
-        numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
-        if len(numeric_cols) >= 2:
-            corr = df[numeric_cols[0]].corr(df[numeric_cols[1]]) if not isinstance(df, dd.DataFrame) else df[numeric_cols[0]].corr(df[numeric_cols[1]]).compute()
-            return f"The correlation between {numeric_cols[0]} and {numeric_cols[1]} is {corr:.2f}."
+    
     if "who are you" in message.lower():
         return "I'm your assistant, built for data analysis."
-    prompt = f"Dataset summary:\n{summary}\nQuestion: {message}"
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future = executor.submit(client.chat.completions.create, model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=200)
-        try:
-            response = future.result(timeout=10)
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logging.error(f"Error in chat_with_gpt: {str(e)}")
-            return "Error processing your request"
+    
+    try:
+        summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}"
+        prompt = f"Dataset summary:\n{summary}\nQuestion: {message}"
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Error in chat_with_gpt: {str(e)}")
+        return f"Error: {str(e)}"
 
-def get_auto_suggestions(df: Union[pd.DataFrame, dd.DataFrame]) -> List[str]:
+def get_auto_suggestions(df: pd.DataFrame) -> List[str]:
     """Provide chat auto-suggestions."""
     return [
         "What’s the correlation between the first two numeric columns?",
