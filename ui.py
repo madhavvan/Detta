@@ -124,7 +124,7 @@ def render_clean_page(openai_client: OpenAI | None):
             selected_suggestions = [sugg for i, sugg in enumerate(st.session_state.suggestions) if st.session_state.get(f"sugg_{i}", False)]
             with st.spinner("Applying cleaning operations..."):
                 try:
-                    cleaned_df = apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with)
+                    cleaned_df, logs = apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with)
                     if not cleaned_df.equals(df):
                         summary = f"Step {len(st.session_state.cleaning_history) + 1}: "
                         if columns_to_drop:
@@ -144,7 +144,7 @@ def render_clean_page(openai_client: OpenAI | None):
         if st.button("Apply All", help="Execute all AI suggestions"):
             with st.spinner("Applying all suggestions..."):
                 try:
-                    cleaned_df = apply_cleaning_operations(df, st.session_state.suggestions, columns_to_drop, replace_value, replace_with)
+                    cleaned_df, logs = apply_cleaning_operations(df, st.session_state.suggestions, columns_to_drop, replace_value, replace_with)
                     if not cleaned_df.equals(df):
                         summary = f"Step {len(st.session_state.cleaning_history) + 1}: Applied all suggestions"
                         st.session_state.cleaning_history.append((st.session_state.cleaned_df, summary))
@@ -187,7 +187,6 @@ def render_clean_page(openai_client: OpenAI | None):
             st.dataframe(cleaned_df.head(10).compute() if st.session_state.is_dask else cleaned_df.head(10), use_container_width=True, height=300)
         else:
             st.dataframe(cleaned_df.compute() if st.session_state.is_dask else cleaned_df, use_container_width=True, height=600)
-
 def render_insights_page(openai_client: OpenAI | None):
     if st.session_state.df is None:
         st.warning("Please upload a dataset first.")
