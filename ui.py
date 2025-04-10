@@ -2,12 +2,13 @@
 import streamlit as st
 import pandas as pd
 import dask.dataframe as dd
-from openai import OpenAI  # Added this import to resolve NameError
+from openai import OpenAI
 from data_utils import get_cleaning_suggestions, apply_cleaning_operations, get_insights, get_visualization_suggestions, get_dataset_summary
 from visualizations import render_chart
 import os
 import json
 from collections import deque
+from datetime import datetime  # Added this import to resolve NameError
 from typing import Union, List, Tuple
 
 # === UPLOAD PAGE ===
