@@ -178,15 +178,15 @@ def get_visualization_suggestions(df: pd.DataFrame) -> List[Dict[str, str]]:
         return []
 
 def apply_cleaning_operations(
-    df: pd.DataFrame,
+    df: Union[pd.DataFrame, Tuple[pd.DataFrame, List[str]]],  # Handle tuple input
     selected_suggestions: List[Tuple[str, str, float]],
     columns_to_drop: List[str],
     options: Dict[str, str] = None,
     replace_value: str = "",
-    replace_with: str = "",  # Made optional with default
-    replace_scope: str = "All columns",  # Made optional with default
-    encode_cols: List[str] = None,  # Made optional with default
-    encode_method: str = "Label Encoding",  # Made optional with default
+    replace_with: str = "",  # Optional with default
+    replace_scope: str = "All columns",  # Optional with default
+    encode_cols: List[str] = None,  # Optional with default
+    encode_method: str = "Label Encoding",  # Optional with default
     auto_clean: bool = False,
     enrich_col: Optional[str] = None,
     enrich_api_key: Optional[str] = None,
@@ -195,8 +195,14 @@ def apply_cleaning_operations(
     feature_cols: Optional[List[str]] = None
 ) -> Tuple[pd.DataFrame, List[str]]:
     """Apply selected cleaning operations to the dataset."""
-    cleaned_df = df.copy()
-    logs = []
+    # Handle tuple input from previous call
+    if isinstance(df, tuple):
+        cleaned_df, existing_logs = df
+        logs = existing_logs.copy()
+    else:
+        cleaned_df = df.copy()
+        logs = []
+
     options = options or {}  # Default to empty dict if None
     encode_cols = encode_cols or []  # Default to empty list if None
 
