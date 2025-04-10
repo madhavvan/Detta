@@ -5,12 +5,18 @@ import streamlit as st
 import httpx
 from scipy.stats import skew
 
-@st.cache_data
+# Remove @st.cache_data from initialize_openai_client since it returns an unserializable object
 def initialize_openai_client():
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
+        st.session_state.logs.append("No OpenAI API key provided.")
         return None
-    return OpenAI(api_key=api_key, http_client=httpx.Client())
+    try:
+        client = OpenAI(api_key=api_key, http_client=httpx.Client())
+        return client
+    except Exception as e:
+        st.session_state.logs.append(f"OpenAI client initialization failed: {str(e)}")
+        return None
 
 @st.cache_data
 def get_dataset_summary(df):
@@ -33,20 +39,24 @@ def get_cleaning_suggestions(df, client):
     
     summary = get_dataset_summary(df)
     prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with detailed reasons."
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=500
-    )
-    suggestions_text = response.choices[0].message.content.strip()
-    suggestions = []
-    for line in suggestions_text.split("\n"):
-        if line.startswith("-") or ":" in line:
-            parts = line.split(" - Reason: ") if " - Reason: " in line else [line, "No reason provided"]
-            suggestion = parts[0].strip("- ").strip()
-            reason = parts[1] if len(parts) > 1 else "No reason provided"
-            suggestions.append((suggestion, reason))
-    return suggestions
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500
+        )
+        suggestions_text = response.choices[0].message.content.strip()
+        suggestions = []
+        for line in suggestions_text.split("\n"):
+            if line.startswith("-") or ":" in line:
+                parts = line.split(" - Reason: ") if " - Reason: " in line else [line, "No reason provided"]
+                suggestion = parts[0].strip("- ").strip()
+                reason = parts[1] if len(parts) > 1 else "No reason provided"
+                suggestions.append((suggestion, reason))
+        return suggestions
+    except Exception as e:
+        st.session_state.logs.append(f"Error in get_cleaning_suggestions: {str(e)}")
+        return [("Error generating suggestions", str(e))]
 
 def apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace_value, replace_with):
     cleaned_df = df.copy()
@@ -87,12 +97,16 @@ def get_insights(df, client):
     
     summary = get_dataset_summary(df)
     prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights with statistical reasoning."
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300
-    )
-    return response.choices[0].message.content.strip().split("\n")
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip().split("\n")
+    except Exception as e:
+        st.session_state.logs.append(f"Error in get_insights: {str(e)}")
+        return ["Error generating insights"]
 
 @st.cache_data
 def get_visualization_suggestions(df, client):
@@ -101,23 +115,27 @@ def get_visualization_suggestions(df, client):
     
     summary = get_dataset_summary(df)
     prompt = f"Given this dataset summary:\n{summary}\nSuggest 3 visualizations (chart type, X-axis, Y-axis) with reasons."
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=200
-    )
-    suggestions_text = response.choices[0].message.content.strip()
-    suggestions = []
-    for line in suggestions_text.split("\n"):
-        if "Chart:" in line:
-            parts = line.split(" - ")
-            desc = parts[0].strip()
-            reason = parts[1].strip() if len(parts) > 1 else "No reason provided"
-            chart_type = desc.split("Chart:")[1].split(",")[0].strip()
-            x = desc.split("X:")[1].split(",")[0].strip()
-            y = desc.split("Y:")[1].strip()
-            suggestions.append({"description": desc, "chart_type": chart_type, "x": x, "y": y, "reason": reason})
-    return suggestions
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        suggestions_text = response.choices[0].message.content.strip()
+        suggestions = []
+        for line in suggestions_text.split("\n"):
+            if "Chart:" in line:
+                parts = line.split(" - ")
+                desc = parts[0].strip()
+                reason = parts[1].strip() if len(parts) > 1 else "No reason provided"
+                chart_type = desc.split("Chart:")[1].split(",")[0].strip()
+                x = desc.split("X:")[1].split(",")[0].strip()
+                y = desc.split("Y:")[1].strip()
+                suggestions.append({"description": desc, "chart_type": chart_type, "x": x, "y": y, "reason": reason})
+        return suggestions
+    except Exception as e:
+        st.session_state.logs.append(f"Error in get_visualization_suggestions: {str(e)}")
+        return []
 
 @st.cache_data
 def chat_with_gpt(df, message, client):
@@ -134,12 +152,16 @@ def chat_with_gpt(df, message, client):
         return "I'm your assistant, built for data analysis."
     
     prompt = f"Dataset summary:\n{summary}\nQuestion: {message}"
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=200
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        st.session_state.logs.append(f"Error in chat_with_gpt: {str(e)}")
+        return "Error processing your request"
 
 def get_auto_suggestions(df):
     return [

@@ -29,7 +29,7 @@ if "onboarding_seen" not in st.session_state:
         if st.button("Got it!"):
             st.session_state.onboarding_seen = True
 
-# Initialize OpenAI client
+# Initialize OpenAI client without caching
 openai_client = initialize_openai_client()
 
 # Sidebar navigation
