@@ -31,7 +31,7 @@ def get_dataset_summary(df):
             summary += f"{col}: {dtype}, {missing} missing, {unique} unique\n"
     return summary
 
-@st.cache_data
+# Remove @st.cache_data to avoid hashing issues with openai_client
 def get_cleaning_suggestions(df, client):
     if client is None:
         return [("AI unavailable", "No OpenAI API key provided")]
@@ -136,7 +136,6 @@ def get_visualization_suggestions(df, client):
         st.session_state.logs.append(f"Error in get_visualization_suggestions: {str(e)}")
         return []
 
-# Remove @st.cache_data from chat_with_gpt to avoid hashing issues
 def chat_with_gpt(df, message, client):
     if client is None:
         return "AI unavailable: No OpenAI API key provided"
