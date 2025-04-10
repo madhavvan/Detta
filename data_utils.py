@@ -3,34 +3,41 @@ from openai import OpenAI
 import os
 import streamlit as st
 import httpx
+from scipy.stats import skew
 
+@st.cache_data
 def initialize_openai_client():
     api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
-    return OpenAI(
-        api_key=api_key,
-        http_client=httpx.Client()
-    )
+    return OpenAI(api_key=api_key, http_client=httpx.Client())
 
-def get_cleaning_suggestions(df, client):
-    if client is None:
-        return [("AI unavailable", "No OpenAI API key provided")]
-    
+@st.cache_data
+def get_dataset_summary(df):
     summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
     for col in df.columns:
         missing = df[col].isna().sum()
         dtype = str(df[col].dtype)
         unique = df[col].nunique()
-        summary += f"{col}: {dtype}, {missing} missing, {unique} unique values\n"
+        if df[col].dtype in ["int64", "float64"]:
+            sk = skew(df[col].dropna())
+            summary += f"{col}: {dtype}, {missing} missing, {unique} unique, skew={sk:.2f}\n"
+        else:
+            summary += f"{col}: {dtype}, {missing} missing, {unique} unique\n"
+    return summary
+
+@st.cache_data
+def get_cleaning_suggestions(df, client):
+    if client is None:
+        return [("AI unavailable", "No OpenAI API key provided")]
     
-    prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with reasons."
+    summary = get_dataset_summary(df)
+    prompt = f"Given this dataset summary:\n{summary}\nSuggest specific data cleaning operations with detailed reasons."
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500
     )
-    
     suggestions_text = response.choices[0].message.content.strip()
     suggestions = []
     for line in suggestions_text.split("\n"):
@@ -50,37 +57,36 @@ def apply_cleaning_operations(df, selected_suggestions, columns_to_drop, replace
         cleaned_df = cleaned_df.replace(replace_value, replace_with if replace_with != "NaN" else pd.NA)
     
     for suggestion, _ in selected_suggestions:
-        if "Fill missing values in" in suggestion:
-            col = suggestion.split("in ")[1].split(" with")[0].strip()
-            method = suggestion.split("with ")[1].strip()
-            if col in cleaned_df.columns:
-                if method == "mean":
-                    cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].mean())
-                elif method == "median":
-                    cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].median())
-        elif "Drop column" in suggestion:
-            col = suggestion.split("Drop column ")[1].strip()
-            if col in cleaned_df.columns:
-                cleaned_df = cleaned_df.drop(columns=[col])
-        elif "Replace" in suggestion and "with" in suggestion:
-            parts = suggestion.split(" ")
-            value = parts[1].strip("'")
-            replace_with = parts[3].strip("'")
-            cleaned_df = cleaned_df.replace(value, replace_with if replace_with != "NaN" else pd.NA)
+        try:
+            if "Fill missing values in" in suggestion:
+                col = suggestion.split("in ")[1].split(" with")[0].strip()
+                method = suggestion.split("with ")[1].strip()
+                if col in cleaned_df.columns:
+                    if method == "mean":
+                        cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].mean())
+                    elif method == "median":
+                        cleaned_df[col] = cleaned_df[col].fillna(cleaned_df[col].median())
+            elif "Drop column" in suggestion:
+                col = suggestion.split("Drop column ")[1].strip()
+                if col in cleaned_df.columns:
+                    cleaned_df = cleaned_df.drop(columns=[col])
+            elif "Replace" in suggestion and "with" in suggestion:
+                parts = suggestion.split(" ")
+                value = parts[1].strip("'")
+                replace_with = parts[3].strip("'")
+                cleaned_df = cleaned_df.replace(value, replace_with if replace_with != "NaN" else pd.NA)
+        except Exception as e:
+            st.session_state.logs.append(f"Cleaning error: {str(e)}")
     
     return cleaned_df
 
+@st.cache_data
 def get_insights(df, client):
     if client is None:
         return ["AI unavailable: No OpenAI API key provided"]
     
-    summary = f"Dataset shape: {df.shape}\nColumns: {list(df.columns)}\n"
-    for col in df.columns:
-        missing = df[col].isna().sum()
-        dtype = str(df[col].dtype)
-        summary += f"{col}: {dtype}, {missing} missing\n"
-    
-    prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights."  # Fixed syntax error
+    summary = get_dataset_summary(df)
+    prompt = f"Analyze this dataset summary:\n{summary}\nProvide key insights with statistical reasoning."
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
@@ -88,10 +94,37 @@ def get_insights(df, client):
     )
     return response.choices[0].message.content.strip().split("\n")
 
+@st.cache_data
+def get_visualization_suggestions(df, client):
+    if client is None:
+        return []
+    
+    summary = get_dataset_summary(df)
+    prompt = f"Given this dataset summary:\n{summary}\nSuggest 3 visualizations (chart type, X-axis, Y-axis) with reasons."
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200
+    )
+    suggestions_text = response.choices[0].message.content.strip()
+    suggestions = []
+    for line in suggestions_text.split("\n"):
+        if "Chart:" in line:
+            parts = line.split(" - ")
+            desc = parts[0].strip()
+            reason = parts[1].strip() if len(parts) > 1 else "No reason provided"
+            chart_type = desc.split("Chart:")[1].split(",")[0].strip()
+            x = desc.split("X:")[1].split(",")[0].strip()
+            y = desc.split("Y:")[1].strip()
+            suggestions.append({"description": desc, "chart_type": chart_type, "x": x, "y": y, "reason": reason})
+    return suggestions
+
+@st.cache_data
 def chat_with_gpt(df, message, client):
     if client is None:
         return "AI unavailable: No OpenAI API key provided"
     
+    summary = get_dataset_summary(df)
     if "correlation" in message.lower():
         numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
         if len(numeric_cols) >= 2:
@@ -100,10 +133,17 @@ def chat_with_gpt(df, message, client):
     if "who are you" in message.lower():
         return "I'm your assistant, built for data analysis."
     
-    prompt = f"Dataset columns: {list(df.columns)}\nQuestion: {message}"
+    prompt = f"Dataset summary:\n{summary}\nQuestion: {message}"
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=200
     )
     return response.choices[0].message.content.strip()
+
+def get_auto_suggestions(df):
+    return [
+        "What’s the correlation between the first two numeric columns?",
+        "Which column has the most missing values?",
+        "Suggest a cleaning step for the dataset."
+    ]
