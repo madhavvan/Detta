@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import httpx
 from typing import Dict, List, Tuple, Optional, Union
-
+pd.set_option('future.no_silent_downcasting', True)
 # Set up logging with rotation
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
