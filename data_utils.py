@@ -218,9 +218,9 @@ def apply_cleaning_operations(
                 matches = cleaned_df[col] == replace_value
                 replace_count += matches.sum()
                 if replace_with.lower() == "nan":
-                    cleaned_df.loc[matches, col] = np.nan
+                    cleaned_df[col] = cleaned_df[col].replace(replace_value, np.nan).infer_objects(copy=False)
                 else:
-                    cleaned_df.loc[matches, col] = replace_with
+                    cleaned_df[col] = cleaned_df[col].replace(replace_value, replace_with).infer_objects(copy=False)
             logs.append(f"Replaced '{replace_value}' with '{replace_with}' in {replace_scope} ({replace_count} instances)")
 
         # Apply AI suggestions
@@ -228,6 +228,7 @@ def apply_cleaning_operations(
             if "Replace '?' with NaN" in suggestion:
                 if '?' in cleaned_df.values:
                     cleaned_df.replace('?', np.nan, inplace=True)
+                    cleaned_df.infer_objects(copy=False)  # Explicitly retain old behavior
                     logs.append(f"Replaced '?' with NaN - {explanation} (Confidence: {confidence:.2f})")
                 else:
                     logs.append(f"No '?' found - {explanation} (Confidence: {confidence:.2f})")
