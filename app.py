@@ -10,6 +10,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from datetime import datetime, timedelta, timezone
 import uuid
+from collections import deque
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
