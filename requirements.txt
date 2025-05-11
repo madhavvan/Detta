@@ -8,7 +8,7 @@ plotly==5.24.1 # Keep version from original
 scipy==1.13.1 # Keep version from original
 dask[dataframe] # Keep from original
 kaleido # Keep from original
-
+PyJWT==2.8.0
 # New dependencies for auth and database
 sqlalchemy==2.0.35
 psycopg2-binary==2.9.9 # For PostgreSQL
