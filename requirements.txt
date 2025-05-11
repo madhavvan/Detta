@@ -1,10 +1,21 @@
 streamlit==1.43.1
-pandas==2.2.3
-numpy==1.26.4
-openai==1.52.2
-httpx==0.27.2
-openpyxl==3.1.5
-plotly==5.24.1
-scipy==1.13.1
-dask[dataframe]
-kaleido
+pandas==2.2.3 # Keep version from original if compatible, or update as needed
+numpy==1.26.4 # Keep version from original
+openai==1.52.2 # Keep version from original
+httpx==0.27.2 # Keep version from original
+openpyxl==3.1.5 # Keep version from original
+plotly==5.24.1 # Keep version from original
+scipy==1.13.1 # Keep version from original
+dask[dataframe] # Keep from original
+kaleido # Keep from original
+
+# New dependencies for auth and database
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9 # For PostgreSQL
+bcrypt==4.2.0 # For password hashing (or 4.1.3 as widely used)
+python-jose[cryptography]==3.3.0 # For JWTs
+google-auth==2.35.0 # For Google ID token verification
+google-auth-oauthlib==1.2.0 # For Google OAuth flow (Updated to a more recent version)
+python-dotenv==1.0.1
+passlib[bcrypt]==1.7.4 # Alternative for bcrypt if needed, but direct bcrypt is fine.
+# uuid # (Standard library, no need to list)
