@@ -4,8 +4,8 @@ Main application file for Detta.
 Handles page routing, authentication, and session management.
 """
 import streamlit as st
-from streamlit.runtime.scriptrunner import get_script_run_ctx  # For logging session ID
-from streamlit.components.v1 import html  # For injecting JavaScript
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.components.v1 import html
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -18,18 +18,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Module Imports ---
-from ui import (
+from signin import (
     render_login_page,
     render_signup_page,
     render_forgot_password_page,
     render_reset_password_page,
     handle_google_oauth_callback,
+    get_query_params,
+    set_page
+)
+from ui import (
     render_upload_page_orig,
     render_clean_page_orig,
     render_insights_page_orig,
-    render_visualization_page_orig,
-    get_query_params,
-    set_page
+    render_visualization_page_orig
 )
 from auth import verify_jwt_token, create_jwt_token, JWT_EXPIRATION_MINUTES, delete_session
 from database import get_db, User, Session as DbSession, init_db as initialize_database, delete_expired_sessions
@@ -173,7 +175,7 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Check for JWT token in query parameters (set by JavaScript)
+    # Check for JWT token in query parameters
     query_params = get_query_params()
     token_from_query = query_params.get("jwt_token", [None])[0]
     if token_from_query and not st.session_state.jwt_token:
@@ -192,7 +194,7 @@ def initialize_session_state():
                 st.session_state.user_email = user.email
                 st.session_state.user_name = user.name or user.email
                 st.session_state.last_activity = datetime.now(timezone.utc)
-                st.session_state.current_page = "Upload"  # Default to Upload after restore
+                st.session_state.current_page = "Upload"
                 app_logger.info(f"User {user.email} re-authenticated via session JWT.")
             else:
                 st.session_state.jwt_token = None
@@ -206,7 +208,7 @@ def initialize_session_state():
             db_gen.close()
 
 initialize_session_state()
-setup_local_storage()  # Inject JavaScript after session state init
+setup_local_storage()
 app_logger = setup_logger()
 
 # --- Database Initialization and Cleanup ---
