@@ -165,6 +165,8 @@ def get_google_oauth_flow():
     """Initializes and returns the Google OAuth flow."""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
         st.error("Google OAuth credentials are not configured.")
+        if 'logger' in st.session_state and st.session_state.logger:
+            st.session_state.logger.error("Google OAuth credentials missing: CLIENT_ID, CLIENT_SECRET, or REDIRECT_URI not set.")
         return None
     try:
         client_config = {
@@ -185,6 +187,11 @@ def get_google_oauth_flow():
         return flow
     except Exception as e:
         st.error(f"Error initializing Google OAuth flow: {e}")
+<<<<<<< HEAD
+=======
+        if 'logger' in st.session_state and st.session_state.logger:
+            st.session_state.logger.error(f"Error initializing Google OAuth flow: {e}", exc_info=True)
+>>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
         print(f"Error initializing Google OAuth flow: {e}")
         return None
 
