@@ -167,27 +167,26 @@ def get_google_oauth_flow():
         st.error("Google OAuth credentials are not configured.")
         return None
     try:
-        flow = Flow.from_client_secrets_file(
-            client_secrets_file=None, # We provide client_id and client_secret directly if not using a file
-            scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
-            redirect_uri=GOOGLE_REDIRECT_URI,
-            client_config={
-                "web": {
-                    "client_id": GOOGLE_CLIENT_ID,
-                    "client_secret": GOOGLE_CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                }
+        client_config = {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "redirect_uris": [GOOGLE_REDIRECT_URI]
             }
+        }
+        flow = Flow.from_client_config(
+            client_config=client_config,
+            scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
         )
+        flow.redirect_uri = GOOGLE_REDIRECT_URI
         return flow
     except Exception as e:
         st.error(f"Error initializing Google OAuth flow: {e}")
-        # Log this error for debugging
         print(f"Error initializing Google OAuth flow: {e}")
         return None
-
 
 def process_google_login(code: str, db: next(get_db())) -> User | None:
     """
