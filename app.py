@@ -1,12 +1,11 @@
-# corrected_app.py
 # app.py
 """
 Main application file for Detta.
-Handles page routing, authentication, and session management.
+Handles page routing, authentication, and session management with a modern UI.
 """
 import streamlit as st
-from streamlit.runtime.scriptrunner import get_script_run_ctx # For logging session ID
-from streamlit.components.v1 import html # For injecting JavaScript
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.components.v1 import html
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -15,7 +14,7 @@ import uuid
 from collections import deque
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # --- Module Imports ---
@@ -29,99 +28,209 @@ from signin import (
     set_page
 )
 from ui import (
-    render_upload_page_orig,
-    render_clean_page_orig,
-    render_insights_page_orig,
-    render_visualization_page_orig
+    render_upload_page,
+    render_clean_page,
+    render_insights_page,
+    render_visualization_page
 )
 from auth import verify_jwt_token, create_jwt_token, JWT_EXPIRATION_MINUTES, delete_session
 from database import get_db, User, Session as DbSession, init_db as initialize_database, delete_expired_sessions
-from data_utils import initialize_openai_client, chat_with_gpt, get_auto_suggestions # Removed unused get_auto_suggestions here if not used
+from data_utils import initialize_openai_client, chat_with_gpt, get_auto_suggestions
 
 # --- Configuration ---
 st.set_page_config(page_title="Detta", layout="wide", initial_sidebar_state="expanded")
 
-# --- Custom CSS ---
+# --- Custom CSS and JavaScript ---
 st.markdown("""
     <style>
-        .main { background-color: #f9f9f9; padding: 20px; border-radius: 10px; }
-        h1, h2, h3 { color: #333; font-family: 'Arial', sans-serif; }
-        .stButton>button {
-            background-color: #4CAF50; color: white; border-radius: 5px; font-size: 16px;
-            padding: 10px 15px; border: none; cursor: pointer;
-        }
-        .stButton>button:hover { background-color: #45a049; }
-        .stTextInput input, .stTextArea textarea {
-            border: 1px solid #ccc; border-radius: 5px; padding: 10px;
-        }
-        .stAlert p { margin-bottom: 0; }
-        .sidebar .sidebar-content { background-color: #f0f0f0; padding: 15px; border-radius: 8px; }
-        .sidebar .stRadio>label { font-size: 16px; color: #333; padding-top: 5px; padding-bottom: 5px;}
-        .sidebar .stRadio>div[role="radiogroup"] > label { margin-bottom: 10px; }
-        .stDataFrame { border: 1px solid #ddd; border-radius: 5px; padding: 10px; }
-        .chat-bubble-user { background-color: #d1e7dd; padding: 10px; border-radius: 8px 8px 0 8px; margin: 5px 0; float: right; clear: both; max-width: 70%; }
-        .chat-bubble-assistant { background-color: #e9ecef; padding: 10px; border-radius: 8px 8px 8px 0; margin: 5px 0; float: left; clear: both; max-width: 70%;}
-        .chat-container { overflow-y: auto; max-height: 300px; margin-bottom: 15px; } /* For scrollable chat */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
 
-        /* Auth Form Centering & Styling */
-        div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-            /* This targets the column where auth forms are placed via st.columns([1,2,1]) */
-            /* Add styling here if direct targeting is needed, but often better to wrap in a styled st.container */
+        :root {
+            --primary: #1E88E5;
+            --secondary: #43A047;
+            --background: #F5F7FA;
+            --card-bg: #FFFFFF;
+            --text: #333333;
+            --text-light: #B0BEC5;
+            --shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
-        .auth-container { /* You'd wrap your form columns in st.container(classname="auth-container") */
+
+        [data-theme="dark"] {
+            --background: #1A1A1A;
+            --card-bg: #2A2A2A;
+            --text: #E0E0E0;
+            --text-light: #78909C;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            transition: all 0.3s ease;
+        }
+
+        .main {
+            padding: 20px;
+            border-radius: 12px;
+            min-height: 100vh;
+        }
+
+        h1, h2, h3 {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        h1 { font-size: 32px; margin-bottom: 20px; }
+        h2 { font-size: 24px; }
+        h3 { font-size: 18px; }
+
+        .stButton>button {
+            background-color: var(--primary);
+            color: white;
+            border-radius: 8px;
+            font-size: 16px;
+            padding: 12px 24px;
+            border: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+
+        .stTextInput input, .stTextArea textarea {
+            border: 1px solid #B0BEC5;
+            border-radius: 8px;
+            padding: 12px;
+            background-color: var(--card-bg);
+            color: var(--text);
+        }
+
+        .sidebar .sidebar-content {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .sidebar .stRadio>label {
+            font-size: 16px;
+            color: var(--text);
+            padding: 10px;
+            border-radius: 8px;
+            transition: background-color 0.2s;
+        }
+
+        .sidebar .stRadio>label:hover {
+            background-color: rgba(30, 136, 229, 0.1);
+        }
+
+        .stDataFrame {
+            border: 1px solid #B0BEC5;
+            border-radius: 8px;
+            padding: 10px;
+            background-color: var(--card-bg);
+        }
+
+        .chat-container {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            background-color: var(--card-bg);
+            padding: 10px;
+        }
+
+        .chat-bubble-user {
+            background-color: var(--primary);
+            color: white;
+            padding: 12px;
+            border-radius: 12px 12px 0 12px;
+            margin: 10px 0;
+            max-width: 70%;
+            float: right;
+            clear: both;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .chat-bubble-assistant {
+            background-color: #E0E0E0;
+            color: #333;
+            padding: 12px;
+            border-radius: 12px 12px 12px 0;
+            margin: 10px 0;
+            max-width: 70%;
+            float: left;
+            clear: both;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .auth-container {
             max-width: 500px;
             margin: 2rem auto;
             padding: 2rem;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            animation: slideIn 0.5s ease;
         }
 
-        /* Google Button */
-        .google-btn {
-            display: inline-flex; align-items: center; justify-content: center;
-            background-color: #4285F4; color: white !important; padding: 10px 15px;
-            border-radius: 5px; border: none; font-size: 16px; cursor: pointer;
-            text-decoration: none; margin-bottom: 15px; width: 100%;
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
         }
-        .google-btn:hover { background-color: #357AE8; color: white !important; }
-        .google-btn img { margin-right: 10px; width: 20px; height: 20px; }
-        .password-strength { font-size: 0.9em; margin-top: -10px; margin-bottom: 10px; text-align: left;}
-        .password-strength.weak { color: #dc3545; }
-        .password-strength.medium { color: #ffc107; }
-        .password-strength.strong { color: #28a745; }
-        *:focus { outline: 2px solid #4CAF50 !important; outline-offset: 2px; }
-        .stButton>button:focus-visible, .stTextInput input:focus-visible,
-        .stSelectbox div[role="button"]:focus-visible, .stCheckbox input:focus-visible {
-             box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.5);
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .stSpinner > div {
+            border-color: var(--primary) transparent var(--primary) transparent !important;
         }
     </style>
+    <script>
+        // Theme toggle and persistence
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('detta_theme', newTheme);
+        }
+
+        // Load theme from localStorage
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('detta_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+
+            // JWT token persistence
+            const token = localStorage.getItem('detta_jwt_token');
+            if (token && !window.location.search.includes('jwt_token')) {
+                window.location.href = window.location.pathname + '?jwt_token=' + encodeURIComponent(token);
+            }
+        });
+    </script>
 """, unsafe_allow_html=True)
 
-# --- JavaScript for Local Storage ---
-def setup_local_storage():
-    """Inject JavaScript to handle JWT token storage and retrieval in localStorage."""
-    js_code = """
-    <script>
-    // Save token to localStorage
-    function saveToken(token) {
-        localStorage.setItem('detta_jwt_token', token);
-    }
-    // Get token from localStorage and redirect with token as query param
-    document.addEventListener('DOMContentLoaded', () => {
-        const token = localStorage.getItem('detta_jwt_token');
-        if (token && !window.location.search.includes('jwt_token')) {
-            // Ensure not to cause a redirect loop if already on the callback or if token is already in URL
-            if (window.location.pathname.indexOf('google_oauth_callback') === -1) {
-                 window.location.href = window.location.pathname + '?jwt_token=' + encodeURIComponent(token);
-            }
-        }
-    });
-    </script>
-    """
-    html(js_code, height=0)
+# --- Theme Toggle Button ---
+def render_theme_toggle():
+    html("""
+        <div class="theme-toggle">
+            <button onclick="toggleTheme()" style="background: var(--primary); color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer;">
+                🌙
+            </button>
+        </div>
+    """, height=50)
 
-# --- Logging Setup (User-Specific and Session-Specific) ---
+# --- Logging Setup ---
 def setup_logger():
     if 'logger_initialized' in st.session_state:
         return st.session_state.logger
@@ -129,15 +238,14 @@ def setup_logger():
     user_identifier = "anonymous"
     if st.session_state.get("authenticated") and st.session_state.get("user_email"):
         user_identifier = st.session_state.user_email.split('@')[0]
-    else:
-        ctx = get_script_run_ctx()
+    elif hasattr(st.runtime, 'scriptrunner') and hasattr(st.runtime.scriptrunner, 'get_script_run_ctx'):
+        ctx = st.runtime.scriptrunner.get_script_run_ctx()
         if ctx:
             user_identifier = f"session_{ctx.session_id[:8]}"
-        else: # Fallback if context is not available (e.g. some background script)
-            user_identifier = f"session_{uuid.uuid4().hex[:8]}"
+    else:
+        user_identifier = f"session_{uuid.uuid4().hex[:8]}"
 
-
-    log_dir = "/tmp/detta_logs" # Consider making this configurable
+    log_dir = "/tmp/detta_logs"
     if not os.path.exists(log_dir):
         try:
             os.makedirs(log_dir)
@@ -151,7 +259,7 @@ def setup_logger():
     logger = logging.getLogger("DettaApp")
     logger.setLevel(logging.INFO)
 
-    if not logger.handlers: # Avoid adding multiple handlers on rerun
+    if not logger.handlers:
         handler = RotatingFileHandler(log_file_path, maxBytes=10*1024*1024, backupCount=3, encoding='utf-8')
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(module)s - %(message)s")
         handler.setFormatter(formatter)
@@ -162,12 +270,11 @@ def setup_logger():
     logger.info(f"Logger initialized for {user_identifier}. Log file: {log_file_path}")
     return logger
 
-# Initialize logger early
+# Initialize logger
 app_logger = setup_logger()
 
 # --- Session State Initialization ---
 def initialize_session_state():
-    """Initializes all necessary session state variables and restores from localStorage."""
     defaults = {
         "authenticated": False,
         "user_id": None,
@@ -183,30 +290,25 @@ def initialize_session_state():
         "vis_suggestions": [],
         "cleaning_history": deque(maxlen=5),
         "pinned_chats": [],
-        "logs": [], # Consider renaming if clashing with logger's logs
+        "logs": [],
         "onboarding_seen": False,
         "api_key_valid": None,
         "current_data_page": 0,
         "is_dask": False,
-        "app_logs": [], # This seems like a duplicate of "logs" or for a different purpose. Clarify.
+        "app_logs": [],
         "csrf_token": None
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Check for JWT token in query parameters (preferred method after JS redirect)
-    query_params_dict = get_query_params()
-    token_from_query = query_params_dict.get("jwt_token", [None])[0]
-
+    # Restore authentication from JWT token
+    query_params = get_query_params()
+    token_from_query = query_params.get("jwt_token", [None])[0]
     if token_from_query and not st.session_state.jwt_token:
         st.session_state.jwt_token = token_from_query
         app_logger.info("Retrieved JWT token from query parameter.")
-        # Clean the token from the URL to prevent it from staying in the address bar
-        st.query_params.clear()
 
-
-    # Attempt to restore authentication from JWT token
     if st.session_state.jwt_token and not st.session_state.authenticated:
         db_gen = get_db()
         db = next(db_gen)
@@ -218,24 +320,23 @@ def initialize_session_state():
                 st.session_state.user_email = user.email
                 st.session_state.user_name = user.name or user.email
                 st.session_state.last_activity = datetime.now(timezone.utc)
-                st.session_state.current_page = "Upload"  # Redirect to Upload page after restore
+                st.session_state.current_page = "Upload"
                 app_logger.info(f"User {user.email} re-authenticated via session JWT.")
             else:
-                st.session_state.jwt_token = None # Clear invalid token
-                html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0) # Clear from localStorage
-                app_logger.info("Invalid or expired session JWT found. Cleared from session and localStorage.")
+                st.session_state.jwt_token = None
+                html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0)
+                app_logger.info("Invalid or expired session JWT found. Cleared from localStorage.")
         except Exception as e:
-            app_logger.error(f"Error validating JWT token during session init: {e}")
+            app_logger.error(f"Error validating JWT token: {e}")
             st.session_state.jwt_token = None
             html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0)
         finally:
             db_gen.close()
 
 initialize_session_state()
-setup_local_storage()  # Inject JavaScript after session state init
-app_logger = setup_logger()  # Re-setup logger if user context changed
+render_theme_toggle()
 
-# --- Database Initialization and Cleanup ---
+# --- Database Initialization ---
 try:
     initialize_database()
     with next(get_db()) as db:
@@ -258,102 +359,68 @@ openai_client = st.session_state.openai_client
 # --- Session Timeout Logic ---
 SESSION_TIMEOUT_MINUTES = 30
 if st.session_state.authenticated:
-    # Update last_activity on every interaction when authenticated
-    # This was potentially being reset by the initialization logic if not careful
-    # We ensure it's current now.
-    current_time_utc = datetime.now(timezone.utc)
-    time_since_last_activity = current_time_utc - st.session_state.last_activity
-
+    st.session_state.last_activity = datetime.now(timezone.utc)
+    time_since_last_activity = datetime.now(timezone.utc) - st.session_state.last_activity
     if time_since_last_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
         app_logger.info(f"User {st.session_state.user_email} session timed out due to inactivity.")
         if st.session_state.jwt_token:
             with next(get_db()) as db:
                 delete_session(db, st.session_state.jwt_token)
-        # Reset relevant session state keys
         st.session_state.authenticated = False
         st.session_state.user_id = None
         st.session_state.user_email = None
         st.session_state.user_name = "Guest"
         st.session_state.jwt_token = None
-        html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0) # Remove from client
+        html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0)
         st.session_state.current_page = "login"
-        st.warning("Your session has timed out due to inactivity. Please log in again.")
+        st.warning("Your session has timed out. Please log in again.")
         st.rerun()
-    else:
-        # Update last activity time if session is not timed out
-        st.session_state.last_activity = current_time_utc
 
+# --- Page Routing ---
+query_params = get_query_params()
+page_param = query_params.get("page", [None])[0]
+oauth_callback_code = query_params.get("code", [None])[0]
 
-# --- Page Routing and Authentication Middleware ---
-query_params_dict_route = get_query_params() # Re-fetch as it might have been cleared
-page_param = query_params_dict_route.get("page", [None])[0]
-oauth_callback_code = query_params_dict_route.get("code", [None])[0] # For Google OAuth
-
-app_logger.info(f"Query params on page load for routing: {query_params_dict_route}, page_param: {page_param}, current_page: {st.session_state.current_page}")
+app_logger.info(f"Query params on page load: {query_params}, page_param: {page_param}")
 
 if page_param and page_param != st.session_state.current_page:
-    app_logger.info(f"Attempting to navigate to page '{page_param}' from query parameter.")
     if page_param in ["login", "signup", "forgot_password", "reset_password", "google_oauth_callback"]:
         st.session_state.current_page = page_param
-        # Clear query params after processing them for navigation to avoid sticky URLs
-        st.query_params.clear()
-
     elif st.session_state.authenticated and page_param in ["Upload", "Clean", "Insights", "Visualize"]:
         st.session_state.current_page = page_param
-        st.query_params.clear()
-    # else:
-        # app_logger.warning(f"Page '{page_param}' not allowed or user not authenticated. Staying on '{st.session_state.current_page}'.")
-
 
 if st.session_state.current_page == "google_oauth_callback" or (oauth_callback_code and not st.session_state.authenticated):
-    st.session_state.current_page = "google_oauth_callback" # Ensure it's set
-    handle_google_oauth_callback() # This function should handle rerun/redirect
-    # No st.rerun() here as handle_google_oauth_callback might do it.
+    st.session_state.current_page = "google_oauth_callback"
+    handle_google_oauth_callback()
 
 # --- Sidebar and Main Content ---
 if st.session_state.authenticated:
     with st.sidebar:
         st.title("Detta")
         st.markdown("---")
-        if st.session_state.user_name and st.session_state.user_name != "Guest":
-            st.write(f"Welcome, {st.session_state.user_name}!")
-        else:
-            st.write(f"Welcome, {st.session_state.user_email}!")
+        st.markdown(f"**Welcome, {st.session_state.user_name or st.session_state.user_email}!**", unsafe_allow_html=True)
 
-        # If authenticated and somehow on an auth page, redirect to Upload
-        if st.session_state.current_page in ["login", "signup", "google_oauth_callback", "forgot_password", "reset_password"]:
-            app_logger.info(f"Authenticated user on '{st.session_state.current_page}', redirecting to Upload.")
+        if st.session_state.current_page in ["login", "signup", "google_oauth_callback"]:
             st.session_state.current_page = "Upload"
-            st.query_params.clear() # Clear params as we are redirecting
-            st.rerun()
-
 
         app_pages = ["Upload", "Clean", "Insights", "Visualize"]
-        # Ensure current_page is valid if authenticated
         if st.session_state.current_page not in app_pages:
-            st.session_state.current_page = "Upload" # Default to Upload
+            st.session_state.current_page = "Upload"
 
-        try:
-            current_page_index = app_pages.index(st.session_state.current_page)
-        except ValueError:
-            current_page_index = 0 # Default to Upload if current_page is somehow invalid
-            st.session_state.current_page = app_pages[current_page_index]
-
+        current_page_index = app_pages.index(st.session_state.current_page) if st.session_state.current_page in app_pages else 0
 
         selected_page_from_radio = st.radio(
             "Navigate", app_pages,
             index=current_page_index,
-            key=f"main_nav_auth_{st.session_state.current_page}" # Dynamic key to reset index
+            key="main_nav_auth"
         )
         if selected_page_from_radio != st.session_state.current_page:
             st.session_state.current_page = selected_page_from_radio
-            app_logger.info(f"Sidebar navigation to: {selected_page_from_radio}")
-            st.query_params.clear() # Clear query params on explicit navigation
             st.rerun()
 
         st.markdown("---")
-        if st.session_state.api_key_valid is None and openai_client is None: # Recheck if somehow invalidated
-            st.session_state.openai_client = initialize_openai_client() # Re-initialize
+        if st.session_state.api_key_valid is None and openai_client is None:
+            st.session_state.openai_client = initialize_openai_client()
             st.session_state.api_key_valid = bool(st.session_state.openai_client)
 
         if st.session_state.api_key_valid:
@@ -374,20 +441,12 @@ if st.session_state.authenticated:
         if not st.session_state.api_key_valid:
             st.warning("AI chat disabled: No OpenAI API key.")
         else:
-            # Chat history display
-            chat_display_container = st.container()
-            with chat_display_container:
-                 # Apply max-height for scrolling to the container holding the chat bubbles
-                st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            with st.container():
                 for chat_item in st.session_state.chat_history:
-                    role = chat_item.get("role")
-                    content = chat_item.get("content")
-                    if role == "user":
-                        st.markdown(f"<div class='chat-bubble-user'>You: {content}</div>", unsafe_allow_html=True)
-                    elif role == "assistant":
-                        st.markdown(f"<div class='chat-bubble-assistant'>Assistant: {content}</div>", unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-
+                    if chat_item.get("role") == "user" or "user" in chat_item:
+                        st.markdown(f"<div class='chat-bubble-user'>You: {chat_item.get('user') or chat_item.get('content')}</div>", unsafe_allow_html=True)
+                    elif chat_item.get("role") == "assistant" or "assistant" in chat_item:
+                        st.markdown(f"<div class='chat-bubble-assistant'>Assistant: {chat_item.get('assistant') or chat_item.get('content')}</div>", unsafe_allow_html=True)
 
             user_chat_input = st.chat_input(
                 "Ask a data question",
@@ -398,14 +457,12 @@ if st.session_state.authenticated:
                 df_for_chat = st.session_state.cleaned_df if st.session_state.cleaned_df is not None else st.session_state.df
                 if df_for_chat is not None:
                     if st.session_state.get("is_dask") and hasattr(df_for_chat, 'compute'):
-                        # For Dask, consider using a sample or head for chat to avoid large computations
-                        df_for_chat_pd = df_for_chat.head(1000).compute() # Example: use first 1000 rows
-                        app_logger.info("Using head(1000).compute() of Dask df for chat.")
+                        df_for_chat_pd = df_for_chat.compute()
                     else:
                         df_for_chat_pd = df_for_chat
 
                     with st.spinner("Thinking..."):
-                        response = chat_with_gpt(df_for_chat_pd, user_chat_input, openai_client) # Pass client
+                        response = chat_with_gpt(df_for_chat_pd, user_chat_input, openai_client)
                     st.session_state.chat_history.append({"role": "user", "content": user_chat_input})
                     st.session_state.chat_history.append({"role": "assistant", "content": response})
                     st.session_state.chat_reset_counter = st.session_state.get('chat_reset_counter', 0) + 1
@@ -416,42 +473,31 @@ if st.session_state.authenticated:
 
         st.markdown("---")
         if st.button("Log Out", key="logout_button", use_container_width=True):
-            logout_user_email = st.session_state.user_email # Log before clearing
+            logout_user_email = st.session_state.user_email
             if st.session_state.jwt_token:
                 with next(get_db()) as db:
                     delete_session(db, st.session_state.jwt_token)
-
-            # Clear sensitive and user-specific session data
-            keys_to_clear = [
-                "authenticated", "user_id", "user_email", "user_name", "jwt_token",
-                "df", "cleaned_df", "chat_history", "suggestions", "vis_suggestions",
-                "cleaning_history", "pinned_chats", "current_data_page", "is_dask"
-            ]
-            for key in keys_to_clear:
-                if key in st.session_state:
+            for key in list(st.session_state.keys()):
+                if key not in ['logger', 'logger_initialized', 'openai_client', 'api_key_valid']:
                     del st.session_state[key]
-
-            initialize_session_state() # Re-initialize to defaults
+            initialize_session_state()
             st.session_state.current_page = "login"
-            html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0) # Remove from client
+            html("<script>localStorage.removeItem('detta_jwt_token');</script>", height=0)
             app_logger.info(f"User {logout_user_email} logged out.")
             st.success("Logged out successfully.")
-            st.query_params.clear() # Clear any existing query params
             st.rerun()
 
-    # Main content area for authenticated users
     with st.container():
         if st.session_state.current_page == "Upload":
-            render_upload_page_orig()
+            render_upload_page(openai_client)
         elif st.session_state.current_page == "Clean":
-            render_clean_page_orig(openai_client)
+            render_clean_page(openai_client)
         elif st.session_state.current_page == "Insights":
-            render_insights_page_orig(openai_client)
+            render_insights_page(openai_client)
         elif st.session_state.current_page == "Visualize":
-            render_visualization_page_orig(openai_client)
+            render_visualization_page(openai_client)
 
 else:
-    # --- Unauthenticated User View ---
     st.markdown('<div class="auth-container">', unsafe_allow_html=True)
     if st.session_state.current_page == "login":
         render_login_page()
@@ -462,21 +508,10 @@ else:
     elif st.session_state.current_page == "reset_password":
         render_reset_password_page()
     elif st.session_state.current_page == "google_oauth_callback":
-        # This state should ideally be handled by the handle_google_oauth_callback function
-        # and redirect quickly. If it persists, it's an issue.
-        st.info("Processing Google Sign-In... If this message persists, please try again or navigate to login.")
-        if st.button("Go to Login"):
-            set_page("login") # Provide an escape hatch
-    else: # Fallback for any other unexpected page state for unauthenticated user
-        app_logger.warning(f"Unauthenticated user on invalid page '{st.session_state.current_page}'. Redirecting to login.")
+        st.info("Processing Google Sign-In... If this message persists, please try again.")
+    else:
+        app_logger.warning(f"Invalid page for unauthenticated user: {st.session_state.current_page}. Redirecting to login.")
         st.session_state.current_page = "login"
-        st.query_params.clear() # Clear query params before rerunning to login
-        render_login_page() # Show login page immediately
+        st.query_params.clear()
+        render_login_page()
     st.markdown('</div>', unsafe_allow_html=True)
-
-# --- Persisting user-specific st.session_state data ---
-# Note: Current implementation uses localStorage for JWT token persistence across refreshes.
-# For data like `df`, `cleaned_df`, `chat_history`, these are session-specific and not persisted
-# across browser closes unless explicitly saved to a database or other persistent storage.
-# The JWT token allows re-authentication, which can then re-establish a session.
-# True persistence of application state (like dataframes) would require more complex backend storage.
