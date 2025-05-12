@@ -1,3 +1,4 @@
+# corrected_auth.py
 # auth.py
 """
 Handles authentication logic including password hashing, JWT management,
@@ -10,10 +11,11 @@ import smtplib
 import ssl
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
+import logging # Standard Python logging
 
 import bcrypt
 import jwt
-from jose import JWTError
+from jose import JWTError # Python-jose's JWTError
 import streamlit as st
 from google_auth_oauthlib.flow import Flow
 from google.oauth2 import id_token
@@ -23,8 +25,10 @@ from dotenv import load_dotenv
 from database import (
     get_db,
     User,
+    PasswordResetToken, # Import for type hinting or direct use if needed
     create_user,
     get_user_by_email,
+    get_user_by_id, # Added import
     get_user_by_google_id,
     update_user_last_login,
     create_session,
@@ -38,6 +42,14 @@ from database import (
 
 load_dotenv()
 
+# Initialize a logger for this module if st.session_state.logger is not available/appropriate
+module_logger = logging.getLogger(__name__)
+if not module_logger.handlers:
+    # Configure module_logger if necessary, or rely on app_logger if passed/accessible
+    # For now, assume app_logger from Streamlit context will be used when possible
+    pass
+
+
 # --- Configuration ---
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -45,7 +57,11 @@ JWT_EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", 1440)) # Defaul
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # e.g., "http://localhost:8501/auth/google/callback" or your Streamlit Cloud URL
+# Ensure GOOGLE_REDIRECT_URI includes the page for callback handling
+# e.g., "http://localhost:8501/?page=google_oauth_callback" or
+# "https://your-app.streamlit.app/?page=google_oauth_callback"
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+
 
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
@@ -53,10 +69,11 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 
-if not all([JWT_SECRET_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
-    st.error("Critical OAuth or JWT configuration is missing. Please check your .env file.")
-    # You might want to raise an exception here or handle it more gracefully
-    # depending on whether this is a hard stop or a recoverable issue for parts of the app.
+if not all([JWT_SECRET_KEY]): # GOOGLE specifics checked where Google Auth is used
+    # Log this as an error, potentially to a dedicated auth log if needed
+    module_logger.critical("JWT_SECRET_KEY is missing. Authentication will fail.")
+    # Raising an error might be too disruptive if only parts of auth are affected
+    # st.error("Critical JWT configuration is missing.") # Avoid st calls in non-UI part
 
 
 # --- Password Utilities ---
@@ -68,42 +85,40 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifies a plain password against a hashed password."""
-    if not hashed_password: # Handles cases where password_hash might be None (e.g. Google SSO user)
+    if not hashed_password:
         return False
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def is_strong_password(password: str) -> bool:
-    """
-    Checks if a password meets strength requirements:
-    - Minimum 8 characters
-    - At least one letter
-    - At least one number
-    - At least one special character
-    """
     if len(password) < 8:
         return False
-    if not re.search(r"[a-zA-Z]", password):
+    if not re.search(r"[a-zA-Z]", password): # Simplified: at least one letter
         return False
     if not re.search(r"[0-9]", password):
         return False
-    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]", password): # OWASP recommended special chars
+    # OWASP: "Length is the most important factor. Complexity requirements... increase password overhead... without a measurable benefit."
+    # Consider simplifying or focusing on length + breach checks if possible.
+    # For now, keeping special char requirement:
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]", password):
         return False
     return True
 
 def get_password_strength(password: str) -> str:
-    """Provides a textual feedback on password strength."""
     if not password:
         return ""
-    if len(password) < 8:
-        return "Weak (too short)"
     score = 0
+    length = len(password)
+
+    if length < 8: return "Weak (too short)"
+    if length >= 12: score += 1 # Bonus for longer passwords
+
     if re.search(r"[a-z]", password): score +=1
     if re.search(r"[A-Z]", password): score +=1
     if re.search(r"[0-9]", password): score +=1
     if re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]", password): score +=1
 
-    if score == 4 and len(password) >= 12: return "Strong"
-    if score >= 3 and len(password) >= 8: return "Medium"
+    if score >= 4: return "Strong" # At least 3 char types + bonus/decent length
+    if score >= 3: return "Medium"
     return "Weak"
 
 
@@ -120,53 +135,75 @@ def create_jwt_token(data: dict, expires_delta: timedelta = None) -> str:
     return encoded_jwt
 
 def verify_jwt_token(token: str, db: next(get_db())) -> User | None:
-    """
-    Verifies a JWT token.
-    Returns the user object if the token is valid and corresponds to an active session,
-    otherwise None.
-    """
     if not token:
         return None
+    app_logger = st.session_state.get("logger", module_logger)
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id_str: str = payload.get("sub") # Assuming 'sub' contains the user_id
-        session_token_db: str = payload.get("jti") # Assuming 'jti' contains the session_id/token from db
+        user_id_str: str = payload.get("sub")
+        session_jti_str: str = payload.get("jti") # JWT ID, should match session_id in DB
 
-        if user_id_str is None or session_token_db is None:
-            return None # Token is malformed
-
-        user_id = uuid.UUID(user_id_str)
-
-        # Check if the session exists in the database and matches the token
-        session = get_session_by_token(db, session_token_db)
-        if not session or session.user_id != user_id or session.expires_at <= datetime.now(timezone.utc):
-            if session: # Session expired or mismatched
-                delete_session(db, session.token)
+        if user_id_str is None or session_jti_str is None:
+            app_logger.warning("JWT missing sub or jti.")
             return None
 
+        user_id = uuid.UUID(user_id_str)
+        session_jti = uuid.UUID(session_jti_str) # The jti is the session_id
+
+        # Check if the session exists in the database and matches the token's jti
+        # Assuming session_id in DB is what 'jti' refers to.
+        db_session = db.query(User.Session).filter(User.Session.session_id == session_jti).first()
+
+        if not db_session:
+            app_logger.warning(f"No DB session found for jti: {session_jti}")
+            return None
+        if db_session.user_id != user_id:
+            app_logger.warning(f"Session jti {session_jti} user_id mismatch.")
+            return None
+        if db_session.expires_at <= datetime.now(timezone.utc):
+            app_logger.info(f"Session jti {session_jti} expired. Deleting.")
+            delete_session(db, db_session.token) # Assuming delete_session takes the full JWT token string
+                                                # or change delete_session to take jti
+            return None
+        if db_session.token != token: # Ensure the stored token matches the presented one
+            app_logger.warning(f"Presented token does not match stored token for jti {session_jti}.")
+            # This could be a sign of token reuse or an issue with token storage/retrieval logic.
+            # For now, we'll treat it as invalid.
+            return None
+
+
         user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            app_logger.warning(f"No user found for id: {user_id} from JWT.")
         return user
-    except JWTError: # Covers ExpiredSignatureError, InvalidTokenError, etc.
+    except jwt.ExpiredSignatureError:
+        app_logger.info("JWT expired.")
         # Attempt to delete if we can parse the jti, otherwise it's an invalid token
         try:
             unverified_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"verify_signature": False, "verify_exp": False})
-            session_token_to_delete = unverified_payload.get("jti")
-            if session_token_to_delete:
-                delete_session(db, session_token_to_delete)
-        except JWTError:
-            pass # Could not decode to get jti
+            session_token_jti_to_delete = unverified_payload.get("jti")
+            if session_token_jti_to_delete:
+                # This assumes delete_session can handle deletion by jti or you have a specific function
+                # delete_session_by_jti(db, uuid.UUID(session_token_jti_to_delete))
+                pass # Placeholder: implement session deletion by jti if needed for cleanup
+        except jwt.DecodeError:
+             app_logger.warning("Could not decode expired JWT to get jti for cleanup.")
         return None
-    except Exception: # Catch other potential errors like UUID conversion
+    except (JWTError, jwt.InvalidTokenError, ValueError) as e: # Catches python-jose errors, PyJWT errors, and UUID conversion errors
+        app_logger.warning(f"Invalid JWT: {e}")
+        return None
+    except Exception as e: # Catch other potential errors
+        app_logger.error(f"Unexpected error during JWT verification: {e}", exc_info=True)
         return None
 
 
 # --- Google OAuth 2.0 Utilities ---
 def get_google_oauth_flow():
-    """Initializes and returns the Google OAuth flow."""
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
-        st.error("Google OAuth credentials are not configured.")
-        if 'logger' in st.session_state and st.session_state.logger:
-            st.session_state.logger.error("Google OAuth credentials missing: CLIENT_ID, CLIENT_SECRET, or REDIRECT_URI not set.")
+    app_logger = st.session_state.get("logger", module_logger)
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
+        msg = "Google OAuth credentials (CLIENT_ID, CLIENT_SECRET, or REDIRECT_URI) are not configured."
+        app_logger.error(msg)
+        # st.error(msg) # Avoid UI calls here directly
         return None
     try:
         client_config = {
@@ -176,32 +213,21 @@ def get_google_oauth_flow():
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [GOOGLE_REDIRECT_URI]
+                "redirect_uris": [GOOGLE_REDIRECT_URI.split('?')[0]] # Base URI without query params for client config
             }
         }
         flow = Flow.from_client_config(
             client_config=client_config,
             scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
         )
-        flow.redirect_uri = GOOGLE_REDIRECT_URI
+        flow.redirect_uri = GOOGLE_REDIRECT_URI # Full redirect URI for the flow instance
         return flow
     except Exception as e:
-        st.error(f"Error initializing Google OAuth flow: {e}")
-<<<<<<< HEAD
-=======
-        if 'logger' in st.session_state and st.session_state.logger:
-            st.session_state.logger.error(f"Error initializing Google OAuth flow: {e}", exc_info=True)
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
-        print(f"Error initializing Google OAuth flow: {e}")
+        app_logger.error(f"Error initializing Google OAuth flow: {e}", exc_info=True)
         return None
 
 def process_google_login(code: str, db: next(get_db())) -> User | None:
-    """
-    Processes the Google login after the user is redirected back from Google.
-    Exchanges the authorization code for tokens, retrieves user info,
-    and creates/updates the user in the database.
-    Returns the user object on successful login.
-    """
+    app_logger = st.session_state.get("logger", module_logger)
     flow = get_google_oauth_flow()
     if not flow:
         return None
@@ -218,44 +244,44 @@ def process_google_login(code: str, db: next(get_db())) -> User | None:
         name = id_info.get('name')
 
         if not email:
-            st.error("Could not retrieve email from Google profile.")
+            app_logger.error("Could not retrieve email from Google profile.")
+            # st.error("Could not retrieve email from Google profile.")
             return None
 
         user = get_user_by_google_id(db, google_id)
         if not user:
-            user = get_user_by_email(db, email) # Check if user exists with this email (e.g. signed up with password)
+            user = get_user_by_email(db, email)
             if user:
-                # Link Google ID to existing account
-                user.google_id = google_id
+                user.google_id = google_id # Link Google ID
+                user.name = user.name or name # Update name if not set or Google's is better
             else:
-                # Create new user
                 user = create_user(db, email=email, name=name, google_id=google_id)
         else:
-            # Update name if it changed, though typically Google ID is fixed
-            if user.name != name:
+            if user.name != name and name: # Update name if changed
                 user.name = name
 
         update_user_last_login(db, user.id)
         db.commit()
         db.refresh(user)
+        app_logger.info(f"Google login processed successfully for user {email}.")
         return user
 
     except Exception as e:
-        st.error(f"Error processing Google login: {e}")
-        # Log this error for debugging
-        print(f"Google login error: {e}")
+        app_logger.error(f"Error processing Google login: {e}", exc_info=True)
+        # st.error(f"Error processing Google login: {e}")
         return None
 
 
 # --- Email Sending Utility (for Password Reset) ---
 def send_password_reset_email(recipient_email: str, reset_link: str):
-    """Sends a password reset email to the user."""
+    app_logger = st.session_state.get("logger", module_logger)
     if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SENDER_EMAIL]):
-        st.error("Email server (SMTP) is not configured. Password reset email cannot be sent.")
-        print("SMTP configuration missing. Cannot send password reset email.")
+        msg = "Email server (SMTP) is not configured. Password reset email cannot be sent."
+        app_logger.error(msg)
+        # st.error(msg)
         return False
 
-    message = MIMEText(f"""
+    message_body = f"""
     Hello,
 
     You requested a password reset for your Detta account.
@@ -267,7 +293,8 @@ def send_password_reset_email(recipient_email: str, reset_link: str):
 
     Thanks,
     The Detta Team
-    """)
+    """
+    message = MIMEText(message_body)
     message["Subject"] = "Detta - Password Reset Request"
     message["From"] = SENDER_EMAIL
     message["To"] = recipient_email
@@ -275,107 +302,111 @@ def send_password_reset_email(recipient_email: str, reset_link: str):
     try:
         context = ssl.create_default_context()
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls(context=context) # Secure the connection
+            server.starttls(context=context)
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.sendmail(SENDER_EMAIL, recipient_email, message.as_string())
-        print(f"Password reset email sent to {recipient_email}")
+        app_logger.info(f"Password reset email sent to {recipient_email}")
         return True
     except Exception as e:
-        st.error(f"Failed to send password reset email: {e}")
-        print(f"SMTP Error: {e}")
+        app_logger.error(f"Failed to send password reset email to {recipient_email}: {e}", exc_info=True)
+        # st.error(f"Failed to send password reset email: {e}")
         return False
 
 
 # --- Core Authentication Functions ---
 def register_user_with_password(db: next(get_db()), email: str, password: str, name: str = None) -> tuple[User | None, str | None]:
-    """Registers a new user with email and password."""
+    app_logger = st.session_state.get("logger", module_logger)
     if get_user_by_email(db, email):
         return None, "Email already registered."
-    if not is_strong_password(password):
-        return None, "Password is not strong enough. Min 8 chars, letter, number, special char."
+    strength_feedback = get_password_strength(password)
+    if not is_strong_password(password): # Use the direct check
+        return None, f"Password is not strong enough. ({strength_feedback}). Min 8 chars, letter, number, special char."
 
     hashed = hash_password(password)
     try:
         user = create_user(db, email=email, name=name, password_hash=hashed)
+        app_logger.info(f"User {email} registered successfully with password.")
         return user, None
     except Exception as e:
-        # Log the exception e
-        print(f"Error during user registration: {e}")
+        app_logger.error(f"Error during user registration for {email}: {e}", exc_info=True)
         return None, "An error occurred during registration. Please try again."
 
 
 def authenticate_user_with_password(db: next(get_db()), email: str, password: str) -> User | None:
-    """Authenticates a user with email and password."""
+    app_logger = st.session_state.get("logger", module_logger)
     user = get_user_by_email(db, email)
-    if not user or not user.password_hash: # No user or user signed up with Google only
+    if not user or not user.password_hash:
+        app_logger.warning(f"Authentication attempt for non-existent or passwordless user: {email}")
         return None
     if not verify_password(password, user.password_hash):
+        app_logger.warning(f"Invalid password attempt for user: {email}")
         return None
     update_user_last_login(db, user.id)
-    db.commit() # Ensure last_login is saved
+    db.commit()
+    app_logger.info(f"User {email} authenticated successfully with password.")
     return user
 
 
 def initiate_password_reset(db: next(get_db()), email: str, app_base_url: str) -> tuple[bool, str]:
-    """
-    Initiates the password reset process.
-    Generates a token, stores it, and sends an email with the reset link.
-    `app_base_url` should be like 'http://localhost:8501' or 'https://your-app.streamlit.app'
-    """
+    app_logger = st.session_state.get("logger", module_logger)
     user = get_user_by_email(db, email)
     if not user:
         return False, "No user found with that email address."
     if not user.password_hash: # User likely signed up via Google
         return False, "This account was created using Google Sign-In. Please use Google to log in or manage your password via Google."
 
-
     # Invalidate any existing tokens for this user
     existing_tokens = db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user.id).all()
     for t in existing_tokens:
         db.delete(t)
     db.commit()
+    app_logger.info(f"Invalidated existing password reset tokens for user {email}.")
 
-    token_value = uuid.uuid4()
+    token_value = uuid.uuid4() # This is the actual token string
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     create_password_reset_token(db, user_id=user.id, token_value=token_value, expires_at=expires_at)
 
-    # Construct reset link (ensure your app handles /reset-password?token=<token_value> route)
-    reset_link = f"{app_base_url}/?page=reset_password&token={token_value}"
+    reset_link = f"{app_base_url}?page=reset_password&token={token_value}"
 
     if send_password_reset_email(user.email, reset_link):
+        app_logger.info(f"Password reset link successfully sent to {email}.")
         return True, "Password reset link sent to your email. Please check your inbox (and spam folder)."
     else:
-        # Clean up token if email failed to prevent unusable tokens
-        delete_password_reset_token(db, token_value)
+        delete_password_reset_token(db, token_value) # Clean up token if email failed
+        app_logger.warning(f"Failed to send password reset email to {email}, token cleaned up.")
         return False, "Failed to send password reset email. Please try again later or contact support."
 
-def verify_and_reset_password(db: next(get_db()), token_value_str: str, new_password: str) -> tuple[bool, str]:
-    """Verifies the reset token and updates the user's password."""
+def verify_and_reset_password(db: next(get_db()), token_value_str: str, new_password: str) -> tuple[User | None, str]:
+    """Verifies the reset token, updates password. Returns (User object or None, message)."""
+    app_logger = st.session_state.get("logger", module_logger)
     try:
         token_value = uuid.UUID(token_value_str)
     except ValueError:
-        return False, "Invalid token format."
+        return None, "Invalid token format."
 
     reset_token_obj = get_password_reset_token(db, token_value)
 
     if not reset_token_obj:
-        return False, "Invalid or expired password reset token."
+        return None, "Invalid or expired password reset token."
     if reset_token_obj.expires_at <= datetime.now(timezone.utc):
         delete_password_reset_token(db, token_value) # Clean up expired token
-        return False, "Password reset token has expired. Please request a new one."
+        app_logger.warning(f"Expired password reset token used: {token_value_str}")
+        return None, "Password reset token has expired. Please request a new one."
 
     if not is_strong_password(new_password):
-        return False, "New password is not strong enough. Min 8 chars, letter, number, special char."
+        return None, "New password is not strong enough. Min 8 chars, letter, number, special char."
 
-    user = get_user_by_id(db, reset_token_obj.user_id)
+    user = get_user_by_id(db, reset_token_obj.user_id) # Re-fetch user
     if not user:
         delete_password_reset_token(db, token_value) # Clean up
-        return False, "User associated with this token no longer exists." # Should not happen
+        app_logger.error(f"User not found for valid password reset token: {token_value_str}, user_id: {reset_token_obj.user_id}")
+        return None, "User associated with this token no longer exists."
 
     new_password_hash = hash_password(new_password)
     update_user_password(db, user.id, new_password_hash)
     delete_password_reset_token(db, token_value) # Invalidate token after use
-    return True, "Password has been successfully reset. You can now log in with your new password."
+    app_logger.info(f"Password successfully reset for user {user.email} via token.")
+    return user, "Password has been successfully reset. You can now log in with your new password."
 
 
 # --- CSRF Protection ---
@@ -386,12 +417,17 @@ def generate_csrf_token():
     return st.session_state.csrf_token
 
 def verify_csrf_token(form_csrf_token: str):
-    """Verifies the CSRF token from a form against the one in session state."""
+    """
+    Verifies the CSRF token from a form against the one in session state.
+    Invalidates the token after successful verification for single-use.
+    """
+    app_logger = st.session_state.get("logger", module_logger)
     session_csrf_token = st.session_state.get('csrf_token')
     if not session_csrf_token or session_csrf_token != form_csrf_token:
+        app_logger.warning("CSRF token mismatch.")
         st.error("CSRF token mismatch. Please try submitting the form again.")
         return False
-    # Invalidate token after use for single-use, or regenerate for next form
-    # For simplicity in Streamlit's rerun model, we might regenerate it on each page load.
-    # Or, if one form per page, could clear it here: del st.session_state.csrf_token
+    # Invalidate token after successful use to make it single-use
+    del st.session_state.csrf_token
+    app_logger.info("CSRF token verified successfully and invalidated.")
     return True
