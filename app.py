@@ -4,13 +4,8 @@ Main application file for Detta.
 Handles page routing, authentication, and session management.
 """
 import streamlit as st
-<<<<<<< HEAD
-from streamlit.runtime.scriptrunner import get_script_run_ctx  # For logging session ID
-from streamlit.components.v1 import html  # For injecting JavaScript
-=======
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 from streamlit.components.v1 import html
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -29,13 +24,6 @@ from signin import (
     render_forgot_password_page,
     render_reset_password_page,
     handle_google_oauth_callback,
-<<<<<<< HEAD
-    render_upload_page_orig,  # Original upload page
-    render_clean_page_orig,   # Original clean page
-    render_insights_page_orig,  # Original insights page
-    render_visualization_page_orig,  # Original visualization page
-=======
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
     get_query_params,
     set_page
 )
@@ -72,28 +60,8 @@ st.markdown("""
         .stDataFrame { border: 1px solid #ddd; border-radius: 5px; padding: 10px; }
         .chat-bubble-user { background-color: #d1e7dd; padding: 10px; border-radius: 8px 8px 0 8px; margin: 5px 0; float: right; clear: both; max-width: 70%; }
         .chat-bubble-assistant { background-color: #e9ecef; padding: 10px; border-radius: 8px 8px 8px 0; margin: 5px 0; float: left; clear: both; max-width: 70%;}
-<<<<<<< HEAD
-        .chat-container { overflow-y: auto; max-height: 300px; margin-bottom: 15px; } /* For scrollable chat */
-
-        /* Auth Form Centering & Styling */
-        div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-            /* This targets the column where auth forms are placed via st.columns([1,2,1]) */
-            /* Add styling here if direct targeting is needed, but often better to wrap in a styled st.container */
-        }
-        .auth-container { /* You'd wrap your form columns in st.container(classname="auth-container") */
-            max-width: 500px;
-            margin: 2rem auto;
-            padding: 2rem;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-
-        /* Google Button (ensure this is consistent with ui.py) */
-=======
         .chat-container { overflow-y: auto; max-height: 300px; margin-bottom: 15px; }
         .auth-container { max-width: 500px; margin: 2rem auto; padding: 2rem; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
         .google-btn {
             display: inline-flex; align-items: center; justify-content: center;
             background-color: #4285F4; color: white !important; padding: 10px 15px;
@@ -123,38 +91,18 @@ def setup_local_storage():
     function saveToken(token) {
         localStorage.setItem('detta_jwt_token', token);
     }
-<<<<<<< HEAD
-    // Get token from localStorage
-    function getToken() {
-        return localStorage.getItem('detta_jwt_token');
-    }
-    // On page load, set token in a hidden input for Streamlit to access
-    document.addEventListener('DOMContentLoaded', () => {
-        const token = getToken();
-        if (token) {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.id = 'jwt_token';
-            input.value = token;
-            document.body.appendChild(input);
-=======
     // Get token from localStorage and redirect with token as query param
     document.addEventListener('DOMContentLoaded', () => {
         const token = localStorage.getItem('detta_jwt_token');
         if (token && !window.location.search.includes('jwt_token')) {
             window.location.href = window.location.pathname + '?jwt_token=' + encodeURIComponent(token);
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
         }
     });
     </script>
     """
     html(js_code, height=0)
 
-<<<<<<< HEAD
-# --- Logging Setup (User-Specific and Session-Specific) ---
-=======
 # --- Logging Setup ---
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
 def setup_logger():
     if 'logger_initialized' in st.session_state:
         return st.session_state.logger
@@ -199,11 +147,7 @@ app_logger = setup_logger()
 
 # --- Session State Initialization ---
 def initialize_session_state():
-<<<<<<< HEAD
-    """Initializes all necessary session state variables and restores from localStorage."""
-=======
     """Initializes session state variables and restores from localStorage."""
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
     defaults = {
         "authenticated": False,
         "user_id": None,
@@ -231,21 +175,12 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-<<<<<<< HEAD
-    # Check for JWT token in localStorage via hidden input
-    if not st.session_state.jwt_token:
-        token_input = st.text_input("Hidden JWT Token", key="jwt_token_hidden", type="password", label_visibility="collapsed")
-        if token_input:
-            st.session_state.jwt_token = token_input
-            app_logger.info("Retrieved JWT token from localStorage via hidden input.")
-=======
     # Check for JWT token in query parameters
     query_params = get_query_params()
     token_from_query = query_params.get("jwt_token", [None])[0]
     if token_from_query and not st.session_state.jwt_token:
         st.session_state.jwt_token = token_from_query
         app_logger.info("Retrieved JWT token from query parameter.")
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
 
     # Attempt to restore authentication from JWT token
     if st.session_state.jwt_token and not st.session_state.authenticated:
@@ -259,11 +194,7 @@ def initialize_session_state():
                 st.session_state.user_email = user.email
                 st.session_state.user_name = user.name or user.email
                 st.session_state.last_activity = datetime.now(timezone.utc)
-<<<<<<< HEAD
-                st.session_state.current_page = "Upload"  # Redirect to Upload page after restore
-=======
                 st.session_state.current_page = "Upload"
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
                 app_logger.info(f"User {user.email} re-authenticated via session JWT.")
             else:
                 st.session_state.jwt_token = None
@@ -277,13 +208,8 @@ def initialize_session_state():
             db_gen.close()
 
 initialize_session_state()
-<<<<<<< HEAD
-setup_local_storage()  # Inject JavaScript after session state init
-app_logger = setup_logger()  # Re-setup logger if user context changed
-=======
 setup_local_storage()
 app_logger = setup_logger()
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
 
 # --- Database Initialization and Cleanup ---
 try:
@@ -308,11 +234,7 @@ openai_client = st.session_state.openai_client
 # --- Session Timeout Logic ---
 SESSION_TIMEOUT_MINUTES = 30
 if st.session_state.authenticated:
-<<<<<<< HEAD
-    st.session_state.last_activity = datetime.now(timezone.utc)  # Update on every load
-=======
     st.session_state.last_activity = datetime.now(timezone.utc)
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
     time_since_last_activity = datetime.now(timezone.utc) - st.session_state.last_activity
     if time_since_last_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
         app_logger.info(f"User {st.session_state.user_email} session timed out due to inactivity.")
@@ -454,10 +376,6 @@ if st.session_state.authenticated:
             render_visualization_page_orig(openai_client)
 
 else:
-<<<<<<< HEAD
-    # --- Unauthenticated User View ---
-=======
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
     st.markdown('<div class="auth-container">', unsafe_allow_html=True)
     if st.session_state.current_page == "login":
         render_login_page()
@@ -475,10 +393,3 @@ else:
         st.query_params.clear()
         render_login_page()
     st.markdown('</div>', unsafe_allow_html=True)
-<<<<<<< HEAD
-
-# --- Persisting user-specific st.session_state data ---
-# Note: Current implementation uses localStorage for JWT token persistence across refreshes.
-# For data like `df`, `cleaned_df`, `chat_history`, consider DB storage for full persistence.
-=======
->>>>>>> 65afbb3776573a29b2d2f32d4ed9efabfd4ce621
